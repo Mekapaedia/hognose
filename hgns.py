@@ -6,46 +6,47 @@ from lark.visitors import Interpreter
 grammar = Lark(
 r'''
 program: stmt+
-stmt: expression_list endstmt
+?stmt: expression_list endstmt
 expression_list: expression (nl COMMA nl expression)* COMMA?
-expression: assignment | classdef | enumdef | funcdef | block | arith
-classdef: CLASS nl NAME [nl EXTENDS nl primary] [nl IMPLEMENTS nl arith] nl block
+?expression: [CLASS nl] [storagetype nl] inner_expression
+?inner_expression: assignment | typedef | enumdef | funcdef | block | arith
+typedef: TYPE nl NAME [nl EXTENDS nl primary] [nl IMPLEMENTS nl arith] [nl block]
 enumdef: ENUM nl NAME [nl EXTENDS nl primary] nl block
-funcdef: FN nl NAME nl OPENPAREN nl variabledef (nl COMMA nl variabledef)* [nl COMMA] nl CLOSEPAREN [nl ARROW nl primary] nl block
+funcdef: FN nl NAME nl OPENPAREN nl [storagetype nl] variabledef (nl COMMA nl [storagetype nl] variabledef)* [nl COMMA] nl CLOSEPAREN [nl ARROW nl primary] [nl block]
 block: OPENBRACE nl stmt+ nl CLOSEBRACE
 assignment: variabledef rhs_assign
-variabledef: [storagetype] nl primary nl [typebound]
+variabledef: primary nl [typebound]
 typebound: COLON nl arith
 rhs_assign: assign_opt nl expression_list
-arith: orexpr
-orexpr: andexpr (nl OR nl andexpr)+ | andexpr
-andexpr: notexpr (nl AND nl notexpr)+ | notexpr
-notexpr: NOT nl notexpr | equality
-equality: relational (nl equal_opt nl relational)+ | relational
-relational: sum (nl relational_opt nl sum)+ | sum
-sum: sum nl sum_opt nl term
+?arith: orexpr
+?orexpr: andexpr (nl OR nl andexpr)+ | andexpr
+?andexpr: notexpr (nl AND nl notexpr)+ | notexpr
+?notexpr: NOT nl notexpr | equality
+?equality: relational (nl equal_opt nl relational)+ | relational
+?relational: sum (nl relational_opt nl sum)+ | sum
+?sum: sum nl sum_opt nl term
    | term
-term: term nl term_opt nl factor
+?term: term nl term_opt nl factor
     | factor
-factor: un_opt nl factor | power
-power: primary nl POW nl factor | primary
-primary: primary nl DOT nl primary | primary nl OPENPAREN nl [expression_list] nl CLOSEPAREN | primary nl OPENSQUARE nl slices nl CLOSESQUARE | atom
-slices: slice | expression_list
-slice: [expression] nl COLON nl [expression] [nl COLON nl [expression]]
-atom: binding | literal | parenexp
-parenexp: OPENPAREN nl expression_list nl CLOSEPAREN
+?factor: un_opt nl factor | power
+?power: primary nl POW nl factor | primary
+?primary: primary nl DOT nl primary | primary nl OPENPAREN nl [expression_list] nl CLOSEPAREN | primary nl OPENSQUARE nl slices nl CLOSESQUARE | atom
+?slices: slice | expression_list
+?slice: [expression] nl COLON nl [expression] [nl COLON nl [expression]]
+?atom: binding | literal | parenexp | TYPE
+?parenexp: OPENPAREN nl expression_list nl CLOSEPAREN
 
-binding: NAME
-literal: INTEGER | FLOAT
-storagetype: STATIC | CONST
-sum_opt: PLUS | MINUS
-term_opt: MULT | DIVIDE
-assign_opt: EQUAL | PLUSEQUAL | MINUSEQUAL | MULTEQUAL | DIVIDEEQUAL | DIVIDEDIVIDEEQUAL | PERCENTEQUAL | POWEQUAL
-equal_opt: EQUALEQUAL | BANGEQUAL
-relational_opt: LT | LTEQUAL | GT | GTEQUAL
-un_opt: NOT | BANG | MINUS | PLUS
-endstmt: SEMICOLON | NEWLINE
-nl: NEWLINE*
+?binding: NAME
+?literal: INTEGER | FLOAT | STRING | LONG_STRING
+?storagetype: STATIC | CONST
+?sum_opt: PLUS | MINUS
+?term_opt: MULT | DIVIDE
+?assign_opt: EQUAL | PLUSEQUAL | MINUSEQUAL | MULTEQUAL | DIVIDEEQUAL | DIVIDEDIVIDEEQUAL | PERCENTEQUAL | POWEQUAL
+?equal_opt: EQUALEQUAL | BANGEQUAL
+?relational_opt: LT | LTEQUAL | GT | GTEQUAL
+?un_opt: NOT | BANG | MINUS | PLUS
+?endstmt: SEMICOLON | NEWLINE
+?nl: NEWLINE*
 
 STATIC: "static"
 CONST: "const"
@@ -109,12 +110,17 @@ NEWLINE: "\n"
 SPACE: " "
 TAB: "\t"
 
+STRING: /([ubf]?r?|r[ubf])("(?!"").*?(?<!\\)(\\\\)*?"|'(?!'').*?(?<!\\)(\\\\)*?')/i
+LONG_STRING: /([ubf]?r?|r[ubf])(""".*?(?<!\\)(\\\\)*?"""|\'''.*?(?<!\\)(\\\\)*?\''')/is
 FLOAT: /[-+]?[0-9_]+\.[0-9_]+([eE][+-][0-9_]+)?/
 INTEGER: /(0|[+-]?[1-9][0-9_]*)/
 NAME: /[_a-z][_a-z0-9]*/i
 
+LINE_CONT: /\\[\t \f]*\r?\n/
+
 %ignore SPACE
 %ignore TAB
+%ignore LINE_CONT
 ''', start="program", propagate_positions=True)
 
 class Binding:
@@ -229,5 +235,5 @@ class HognoseEval(Interpreter):
         return str(tree.children[0].value)
 
 parse_tree = grammar.parse("static a = 2 + 3\nconst c = 3 - 2/a;")
-print(parse_tree)
+print(parse_tree.pretty())
 #HognoseEval().visit(parse_tree)
