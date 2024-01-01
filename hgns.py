@@ -18,7 +18,8 @@ assignment: variabledef rhs_assign
 variabledef: primary nl [typebound]
 typebound: COLON nl arith
 rhs_assign: assign_opt nl expression_list
-?arith: orexpr
+?arith: asexpr
+?asexpr: orexpr nl AS nl primary | orexpr
 ?orexpr: andexpr (nl OR nl andexpr)+ | andexpr
 ?andexpr: notexpr (nl AND nl notexpr)+ | notexpr
 ?notexpr: NOT nl notexpr | equality
