@@ -1,0 +1,17 @@
+fn cheese(a) {
+    while(a) {
+        b;
+    };
+    a;
+};
+cheese();
+b = {c: f, ds: aaa};
+
+if (b)
+{
+  b;
+}
+elif (c)
+{
+   c = b;
+};
