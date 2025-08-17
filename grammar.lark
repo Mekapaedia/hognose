@@ -1,0 +1,92 @@
+start: statement+
+
+statement: NEWLINE* expression endstmt NEWLINE*
+
+endstmt: SEMI_COLON | NEWLINE
+
+?expression: access
+           | atom
+?atom: literal
+    | array
+    | dict
+    | range
+    | name
+?literal: number
+?number: real
+      | hex
+      | oct
+      | bin
+      | complex
+      | quaternion
+
+access: expression access_op
+access_op: array_access
+         | function_call
+         | dot_access
+
+array_access: OPEN_SQUARE slice CLOSE_SQUARE
+dot_access: DOT name
+function_call: OPEN_PAREN call_args? CLOSE_PAREN
+
+slice: range (COMMA range)?
+
+call_args: expression (COMMA expression)*
+
+range: expression? (closed_range | open_range)
+closed_range: expression TRIPLE_DOT expression
+open_range: expression DOUBLE_DOT expression
+
+dict: OPEN_SQUARE dict_expressions CLOSE_SQUARE
+dict_expressions: expression COLON expression (COMMA expression COLON expression)*
+                 | COLON
+array: OPEN_SQUARE matrix_expressions? CLOSE_SQUARE
+matrix_expressions: array_expressions (SEMI_COLON array_expressions)*
+array_expressions: expression (COMMA expression)*
+
+plus_minus: PLUS | MINUS
+real: integer | float
+integer: INTEGER
+hex: HEX
+oct: OCT
+bin: BIN
+float: INTEGER DOT INTEGER float_exp?
+float_exp: E plus_minus? INTEGER
+complex: real plus_minus real I
+quaternion: real plus_minus real I plus_minus real J plus_minus real K
+
+name: NAME
+
+NAME: /[a-zA-Z_][a-zA-Z0-9_\-]*/
+
+INTEGER: DEC_DIGIT+
+HEX: "0" ("x"|"X") HEX_DIGIT+
+OCT: "0" ("o"|"O") OCT_DIGIT+
+BIN: "0" ("b"|"B") BIN_DIGIT+
+
+DEC_DIGIT: /[0-9_]/
+HEX_DIGIT: /[0-9a-fA-F_]/
+OCT_DIGIT: /[0-7_]/
+BIN_DIGIT: /[0-1_]/
+
+I: ("i"|"I")
+J: ("j"|"J")
+K: ("k"|"K")
+E: ("e"|"E")
+
+PLUS: "+"
+MINUS: "-"
+DOT: "."
+COMMA: ","
+OPEN_SQUARE: "["
+CLOSE_SQUARE: "]"
+OPEN_PAREN: "("
+CLOSE_PAREN: ")"
+COLON: ":"
+SEMI_COLON: ";"
+DOUBLE_DOT: ".."
+TRIPLE_DOT: "..."
+NEWLINE: "\n"
+
+WS_INLINE: /[ \t]/
+
+%ignore WS_INLINE
