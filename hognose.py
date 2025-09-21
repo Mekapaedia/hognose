@@ -9,6 +9,11 @@ with open("grammar.lark") as f:
 
 parser = Lark(grammar_text)
 
-input_text = "[2: 500_000.2e-10+3i-5.0j+400k, 3[..2]: [2...4;[2..a[1..]]]"
+input_text = """
+[2: 500_000.2e-10+3i-5.0j+400k, 3[1..2]: [2...4;[2..a[1..3]]]]
+
+2
+3
+"""
 
 print(parser.parse(input_text).pretty())
