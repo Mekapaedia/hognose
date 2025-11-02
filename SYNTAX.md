@@ -62,7 +62,7 @@ b[0, 1] # (a, 3)
 c[1..3, 2...4, -1] # ((b,c), (c, d, 1), (1,))
 ```
 
-## Associate arrays (Dictionaries)
+## Associative arrays (Dictionaries)
 
 ```
 a = [
