@@ -2,9 +2,11 @@ start: statement+
 
 statement: NEWLINE* expression endstmt NEWLINE*
 
-endstmt: SEMI_COLON | NEWLINE
+?endstmt: SEMI_COLON | NEWLINE
 
-?expression: access
+?expression: assign
+           | arith
+           | access
            | atom
 ?atom: literal
     | array
@@ -19,11 +21,29 @@ endstmt: SEMI_COLON | NEWLINE
       | complex
       | quaternion
 
+assign: atom access_op? assign_op expression
+assign_op: EQUALS
+
+arith: logic_or
+?logic_or: logic_and (OR_OP logic_and)+ | logic_and
+?logic_and: logic_not (AND_OP logic_not)+ | logic_not
+?logic_not: NOT_OP logic_not | relation
+?relation: bit_or (REL_OP bit_or)+ | bit_or
+?bit_or: bit_or BIT_OR_OP bit_xor | bit_xor
+?bit_xor: bit_xor BIT_XOR_OP bit_and | bit_and
+?bit_and: bit_and BIT_AND_OP shift | shift
+?shift: shift SHIFT_OP sum | sum
+?sum: sum SUM_OP product | product
+?product: product PRODUCT_OP un_op | un_op
+?un_op: UN_OP un_op | exponent
+?exponent: parens EXP_OP un_op | parens
+?parens: OPEN_PAREN expression CLOSE_PAREN | primary
+?primary: atom
+
 access: expression access_op
 access_op: array_access
          | function_call
          | dot_access
-
 array_access: OPEN_SQUARE slice CLOSE_SQUARE
 dot_access: DOT name
 function_call: OPEN_PAREN call_args? CLOSE_PAREN
@@ -44,7 +64,7 @@ matrix_expressions: array_expressions (SEMI_COLON array_expressions)*
 array_expressions: expression (COMMA expression)*
 
 plus_minus: PLUS | MINUS
-real: integer | float
+?real: integer | float
 integer: INTEGER
 hex: HEX
 oct: OCT
@@ -73,6 +93,21 @@ J: ("j"|"J")
 K: ("k"|"K")
 E: ("e"|"E")
 
+OR_OP: "or" | "||"
+AND_OP: "and" | "&&"
+NOT_OP: "not" | "!"
+SUM_OP: PLUS | MINUS
+UN_OP: "+" | "-" | "~"
+EXP_OP: "**"
+PRODUCT_OP: "*" | "/" | "//" | "%"
+SHIFT_OP: "<<" | ">>"
+BIT_AND_OP: "&"
+BIT_XOR_OP: "^"
+BIT_OR_OP: "|"
+REL_OP: "==" | "!=" | ">" | "<" | ">=" | "<="
+OPEN_BRACE: "{"
+CLOSE_BRACE: "}"
+EQUALS: "="
 PLUS: "+"
 MINUS: "-"
 DOT: "."
