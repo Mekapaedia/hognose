@@ -1,127 +1,195 @@
-start: statement+
+?start: expr_list
 
-statement: NEWLINE* expression endstmt NEWLINE*
+?term_expr: newlines [more_term_expr]
+          | SEMI_COLON [more_term_expr]
+?more_term_expr: newlines [more_term_expr]
+               | SEMI_COLON [more_term_expr]
+?expr_list: [newlines] expr term_expr [expr_list]
 
-?endstmt: SEMI_COLON | NEWLINE
+?expr: assign
 
-?expression: assign
-           | arith
-           | access
-           | atom
-?atom: literal
-    | array
-    | dict
-    | range
-    | name
-?literal: number
-?number: real
-      | hex
-      | oct
-      | bin
-      | complex
-      | quaternion
+?type_expr: COLON [newlines] arith
+?assign: name [newlines] [type_expr] assignop [newlines] starred_expr
+       | starred_expr
 
-assign: atom access_op? assign_op expression
-assign_op: EQUALS
+?starred_expr: STAR group
+             | STAR_STAR group
+             | group
 
-arith: logic_or
-?logic_or: logic_and (OR_OP logic_and)+ | logic_and
-?logic_and: logic_not (AND_OP logic_not)+ | logic_not
-?logic_not: NOT_OP logic_not | relation
-?relation: bit_or (REL_OP bit_or)+ | bit_or
-?bit_or: bit_or BIT_OR_OP bit_xor | bit_xor
-?bit_xor: bit_xor BIT_XOR_OP bit_and | bit_and
-?bit_and: bit_and BIT_AND_OP shift | shift
-?shift: shift SHIFT_OP sum | sum
-?sum: sum SUM_OP product | product
-?product: product PRODUCT_OP un_op | un_op
-?un_op: UN_OP un_op | exponent
-?exponent: parens EXP_OP un_op | parens
-?parens: OPEN_PAREN expression CLOSE_PAREN | primary
-?primary: atom
+?group: block more_group [COMMA]
+      | block
+?more_group: [newlines] COMMA [newlines] block [more_group]
 
-access: expression access_op
-access_op: array_access
-         | function_call
-         | dot_access
-array_access: OPEN_SQUARE slice CLOSE_SQUARE
-dot_access: DOT name
-function_call: OPEN_PAREN call_args? CLOSE_PAREN
+?block: OPEN_BRACE expr_list CLOSE_BRACE
+      | control
 
-slice: range (COMMA range)?
+?control: control_exprs
+        | arith
+?control_exprs: if
+              | for
+              | while
+?cond_body: [newlines] expr [elexpr_or_else]
+?if: IF expr cond_body
+?elif: ELIF expr cond_body
 
-call_args: expression (COMMA expression)*
+?for_expr: expr IN expr
+?for: FOR for_expr cond_body
+?elfor: ELFOR for_expr cond_body
 
-range: expression? (closed_range | open_range)
-closed_range: expression TRIPLE_DOT expression
-open_range: expression DOUBLE_DOT expression
+?while: WHILE expr cond_body
+?elwhile: ELWHILE expr cond_body
 
-dict: OPEN_SQUARE dict_expressions CLOSE_SQUARE
-dict_expressions: expression COLON expression (COMMA expression COLON expression)*
-                 | COLON
-array: OPEN_SQUARE matrix_expressions? CLOSE_SQUARE
-matrix_expressions: array_expressions (SEMI_COLON array_expressions)*
-array_expressions: expression (COMMA expression)*
+?elexpr_or_else: [newlines] elexpr_or_else_real
+?elexpr_or_else_real: elexpr | else
+?elexpr: elif | elfor | elwhile
 
-plus_minus: PLUS | MINUS
-?real: integer | float
-integer: INTEGER
-hex: HEX
-oct: OCT
-bin: BIN
-float: INTEGER DOT INTEGER float_exp?
-float_exp: E plus_minus? INTEGER
-complex: real plus_minus real I
-quaternion: real plus_minus real I plus_minus real J plus_minus real K
+?else: ELSE [newlines] expr
 
-name: NAME
+// This bit is largely cribbed from https://docs.python.org/3/reference/grammar.html
+?arith: disjunction
+?disjunction: conjunction more_disjunction
+            | conjunction
+?more_disjunction: or conjunction [more_disjunction]
+?conjunction: inversion more_conjunction
+            | inversion
+?more_conjunction: and [more_conjunction]
+?inversion: not inversion
+          | comparison
+?comparison: bitwise_or comp_op_bitwise_or
+           | bitwise_or
+?comp_op_bitwise_or: comp_op bitwise_or [comp_op_bitwise_or]
+?bitwise_or: bitwise_or bor bitwise_xor
+           | bitwise_xor
+?bitwise_xor: bitwise_xor bxor bitwise_and
+            | bitwise_and
+?bitwise_and: bitwise_and band shift_expr
+            | shift_expr
+?shift_expr: shift_expr shift_op sum
+           | sum
+?sum: sum sum_op term
+    | term
+?term: term term_op factor
+     | factor
+?factor: factor_op factor
+       | power
+?power: primary power_op factor
+      | primary
 
-NAME: /[a-zA-Z_][a-zA-Z0-9_\-]*/
+?primary: primary DOT name
+        | primary call_args
+        | primary slice
+        | atom
 
-INTEGER: DEC_DIGIT+
-HEX: "0" ("x"|"X") HEX_DIGIT+
-OCT: "0" ("o"|"O") OCT_DIGIT+
-BIN: "0" ("b"|"B") BIN_DIGIT+
+?call_args: OPEN_PAREN [newlines] [call_args_body] CLOSE_PAREN
+?call_args_body: TODO_CALL_ARGS [newlines]
 
-DEC_DIGIT: /[0-9_]/
-HEX_DIGIT: /[0-9a-fA-F_]/
-OCT_DIGIT: /[0-7_]/
-BIN_DIGIT: /[0-1_]/
+?slice: OPEN_SQUARE [newlines] [slice_body] CLOSE_SQUARE
+?slice_body: TODO_SLICE_BODY [newlines]
 
-I: ("i"|"I")
-J: ("j"|"J")
-K: ("k"|"K")
-E: ("e"|"E")
+?atom: name
+     | true
+     | false
+     | null
+     | string
+     | number
+     | parens
+     | list_or_dict
 
-OR_OP: "or" | "||"
-AND_OP: "and" | "&&"
-NOT_OP: "not" | "!"
-SUM_OP: PLUS | MINUS
-UN_OP: "+" | "-" | "~"
-EXP_OP: "**"
-PRODUCT_OP: "*" | "/" | "//" | "%"
-SHIFT_OP: "<<" | ">>"
-BIT_AND_OP: "&"
-BIT_XOR_OP: "^"
-BIT_OR_OP: "|"
-REL_OP: "==" | "!=" | ">" | "<" | ">=" | "<="
-OPEN_BRACE: "{"
-CLOSE_BRACE: "}"
-EQUALS: "="
+?parens: OPEN_PAREN [newlines] starred_expr [newlines] CLOSE_PAREN
+
+?open_list_or_dict: OPEN_SQUARE [newlines]
+?close_list_or_dict: [newlines] CLOSE_SQUARE
+?list_or_dict: open_list_or_dict list_body close_list_or_dict
+             | open_list_or_dict dict_body close_list_or_dict
+?list_body: TODO_LIST
+?dict_body: TODO_DICT
+
+?comp_op: single_comp_op | multi_comp_op
+?single_comp_op: EQUAL_EQUAL | BANG_EQUAL | LE | LT | GE | GT
+?multi_comp_op: not_in | in | is_not | is
+?not_in: NOT IN
+?in: IN
+?is_not: IS NOT
+?is: IS
+?power_op: STAR_STAR
+?factor_op: PLUS | MINUS | TILDE
+?term_op: STAR | DIV | DIV_DIV | PERCENT
+?sum_op: PLUS | MINUS
+?shift_op: LSHIFT | RSHIFT
+?band: AMP
+?bxor: CARAT
+?bor: BAR
+?and: AND | DOUBLE_AMP
+?or: OR | DOUBLE_BAR
+?not: NOT | BANG
+?newlines: NEWLINE [more_newline]
+?more_newline: NEWLINE [more_newline]
+?assignop: EQUAL
+
+?true: TRUE
+?false: FALSE
+?null: NULL
+?string: TODO_STRING
+?number: TODO_NUMBER
+?name: NAME
+
+TODO_CALL_ARGS: "todo_call_args"
+TODO_SLICE_BODY: "todo_slice_body"
+TODO_LIST: "todo_list"
+TODO_DICT: "todo_dict"
+TODO_STRING: "todo_string"
+TODO_NUMBER: "todo_number"
+TRUE: "true"
+FALSE: "false"
+NULL: "null"
+DOT: "."
+TILDE: "~"
+PERCENT: "%"
+DIV_DIV: "//"
+DIV: "/"
 PLUS: "+"
 MINUS: "-"
-DOT: "."
-COMMA: ","
-OPEN_SQUARE: "["
-CLOSE_SQUARE: "]"
+LSHIFT: "<<"
+RSHIFT: ">>"
+AMP: "&"
+CARAT: "^"
+BAR: "|"
+EQUAL_EQUAL: "=="
+BANG_EQUAL: "!="
+LE: "<="
+LT: "<"
+GE: ">="
+GT: ">"
+OR: "or"
+IS: "is"
+DOUBLE_BAR: "||"
+AND: "and"
+DOUBLE_AMP: "&&"
+NOT: "not"
+BANG: "!"
+STAR: "*"
+STAR_STAR: "**"
+COLON: ":"
+EQUAL: "="
+IF: "if"
+ELIF: "elif"
+ELSE: "else"
+FOR: "for"
+ELFOR: "elfor"
+IN: "in"
+WHILE: "while"
+ELWHILE: "elwhile"
 OPEN_PAREN: "("
 CLOSE_PAREN: ")"
-COLON: ":"
+OPEN_SQUARE: "["
+CLOSE_SQUARE: "]"
+OPEN_BRACE: "{"
+CLOSE_BRACE: "}"
+COMMA: ","
 SEMI_COLON: ";"
-DOUBLE_DOT: ".."
-TRIPLE_DOT: "..."
 NEWLINE: "\n"
+NAME.-1: /[a-zA-Z_][a-zA-Z0-9_\-]*/
 
-WS_INLINE: /[ \t]/
+WS_INLINE: /[ \t\v]/
 
 %ignore WS_INLINE
