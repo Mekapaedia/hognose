@@ -1,0 +1,8 @@
+a=1
+b=2;c=3
+
+d = a + 3 / b
+d = d + 1
+print(d, a, end='')
+print("")
+print("cheessseee", c)

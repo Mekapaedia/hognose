@@ -1,13 +1,29 @@
 ?start: expr_list
 
 ?expr_list: terminated_expr [expr_list]
-?label: name COLON [newlines]
-?terminated_expr: [label] [expr] terminator
-?expr: exit_expr
+?terminated_expr: [properties] [expr] terminator
+?properties: property [newlines] [more_properties]
+?more_properties: property [newlines] [more_properties]
+?property: STATIC
+         | PUBLIC
+         | PRIVATE
+         | PROTECTED
+         | FINAL
+         | CLOSED
+         | CONST
+         | INIT
+         | GET
+         | SET
+
+?expr: using_expr [type_expr]
+
+?using_expr: USING [newlines] primary [using_as]
+           | exit_expr
+?using_as: [newlines] AS [newlines] primary
 
 ?exit_expr: exit_type [exit_value] [exit_direction]
           | assign
-?exit_value: [newlines] assign
+?exit_value: [newlines] expr
 ?exit_type: RETURN
           | YIELD
           | CONTINUE
@@ -17,8 +33,8 @@
 
 ?exit_direction: [newlines] TO [newlines] name
 
-?type_expr: COLON [newlines] arith
-?assign: primary [newlines] [type_expr] assignop [newlines] group
+?type_expr: [newlines] COLON [newlines] arith
+?assign: primary_assign [type_expr] [newlines] assign_op [newlines] expr
        | group
 
 ?group: starred_expr more_group [COMMA]
@@ -27,15 +43,47 @@
 
 ?starred_expr: single_star_expr
              | double_star_expr
-             | block
+             | structure_decl
+?single_star_expr: STAR structure_decl
+?double_star_expr: STAR_STAR structure_decl
 
-?single_star_expr: STAR block
-?double_star_expr: STAR_STAR block
+?structure_decl: fndecl
+               | classdecl
+               | namespacedecl
+               | labeled_block
+?fndecl: FN [name] [newlines] OPEN_PAREN [newlines] [fnparams] CLOSE_PAREN [type_expr] [newlines] expr
+?fnparams: param [newlines] [more_params]
+?more_params: COMMA [newlines] param [newlines] [more_params]
+?param: param_ele
+      | star_param_ele
+      | double_star_param_ele
+      | DIV
+      | STAR
+?param_ele: name [type_expr] [param_default]
+?star_param_ele: STAR name [type_expr]
+?double_star_param_ele: STAR_STAR name [type_expr]
+?param_default: [newlines] EQUAL starred_expr
 
-?block: OPEN_BRACE expr_list CLOSE_BRACE
-      | control
+?classdecl: class_type [name] [class_parents] [newlines] block
+?class_type: CLASS | STATIC CLASS | TRAIT
+?class_parents: COLON [newlines] class_parents_body
+?class_parents_body: class_parent_ele [more_class_parents_body]
+?more_class_parents_body: [newlines] COMMA [newlines] class_parent_ele [more_class_parents_body]
+?class_parent_ele: name [class_parent_assign]
+                 | classdecl
+?class_parent_assign: [newlines] EQUAL [newlines] structure_decl
 
-?control: control_exprs
+?namespacedecl: namespace_whole_file
+              | namespace_local
+?namespace_whole_file: NAMESPACE name [block]
+?namespace_local: NAMESPACE [name] block
+
+?label: name COLON [newlines]
+?labeled_block: [label] block
+              | control
+?block: OPEN_BRACE [expr_list] CLOSE_BRACE
+
+?control: [label] [newlines] control_exprs
         | arith
 ?control_exprs: if
               | for
@@ -59,44 +107,50 @@
 
 // This bit is largely cribbed from https://docs.python.org/3/reference/grammar.html
 ?arith: disjunction
-?disjunction: conjunction more_disjunction
+?disjunction: conjunction [newlines] more_disjunction
             | conjunction
-?more_disjunction: or conjunction [more_disjunction]
-?conjunction: inversion more_conjunction
+?more_disjunction: [newlines] or [newlines] conjunction [more_disjunction]
+?conjunction: inversion [newlines] more_conjunction
             | inversion
-?more_conjunction: and [more_conjunction]
-?inversion: not inversion
+?more_conjunction: [newlines] and [more_conjunction]
+?inversion: not [newlines] inversion
           | comparison
 ?comparison: bitwise_or comp_op_bitwise_or
            | bitwise_or
-?comp_op_bitwise_or: comp_op bitwise_or [comp_op_bitwise_or]
-?bitwise_or: bitwise_or bor bitwise_xor
+?comp_op_bitwise_or: [newlines] comp_op [newlines] bitwise_or [comp_op_bitwise_or]
+?bitwise_or: bitwise_or [newlines] bor [newlines] bitwise_xor
            | bitwise_xor
-?bitwise_xor: bitwise_xor bxor bitwise_and
+?bitwise_xor: bitwise_xor [newlines] bxor [newlines] bitwise_and
             | bitwise_and
-?bitwise_and: bitwise_and band shift_expr
+?bitwise_and: bitwise_and [newlines] band [newlines] shift_expr
             | shift_expr
-?shift_expr: shift_expr shift_op sum
+?shift_expr: shift_expr [newlines] shift_op [newlines] sum
            | sum
-?sum: sum sum_op term
+?sum: sum [newlines] sum_op [newlines] term
     | term
-?term: term term_op factor
+?term: term [newlines] term_op [newlines] factor
      | factor
-?factor: factor_op factor
+?factor: factor_op [newlines] factor
        | power
-?power: primary power_op factor
+?power: primary [newlines] power_op [newlines] factor
       | primary
 
-?primary: primary DOT name
-        | primary call_args
-        | primary slice
+primary_assign: primary [newlines] access
+              | atom
+primary: primary [newlines] access
         | atom
+?access: field_access
+       | call_args
+       | slice
+?field_access: DOT [newlines] name
 
 ?call_args: OPEN_PAREN [newlines] [call_args_body] CLOSE_PAREN
 ?call_args_body: call_args_ele [more_call_args] [newlines]
-?more_call_args: [newlines] COMMA [newlines] call_args_ele [newlines] [more_call_args]
-?call_args_ele: name [newlines] EQUAL [newlines] starred_expr
-              | starred_expr
+?more_call_args: [newlines] COMMA [newlines] call_args_ele [more_call_args]
+?call_args_ele: pos_arg
+              | kw_arg
+kw_arg: name [newlines] EQUAL [newlines] starred_expr
+pos_arg: starred_expr
 
 ?slice: OPEN_SQUARE [newlines] slice_body [newlines] CLOSE_SQUARE
 ?slice_body: slice_expr [newlines] [more_slice]
@@ -108,12 +162,15 @@
      | true
      | false
      | null
+     | self
+     | cls
+     | super
      | string
      | number
      | parens
      | list_or_dict
 
-?parens: OPEN_PAREN [newlines] group [newlines] CLOSE_PAREN
+?parens: OPEN_PAREN [newlines] expr [newlines] CLOSE_PAREN
 
 ?list_or_dict: OPEN_SQUARE [newlines] [list_or_dict_body] CLOSE_SQUARE
 ?list_or_dict_body: list_or_dict_body_inner [newlines]
@@ -134,41 +191,50 @@
        | hex
        | decimal
 
-?bin: BIN
-?oct: OCT
-?hex: HEX
-?decimal: DECIMAL
-?string: D_ML_STRING
-       | S_ML_STRING
-       | D_SL_STRING
-       | S_SL_STRING
+bin: BIN
+oct: OCT
+hex: HEX
+decimal: DECIMAL
+string: d_ml_string
+      | s_ml_string
+      | d_sl_string
+      | s_sl_string
+d_ml_string: D_ML_STRING
+s_ml_string: S_ML_STRING
+d_sl_string: D_SL_STRING
+s_sl_string: S_SL_STRING
 
-?comp_op: single_comp_op | multi_comp_op
-?single_comp_op: EQUAL_EQUAL | BANG_EQUAL | LE | LT | GE | GT
-?multi_comp_op: not_in | in | is_not | is
-?not_in: NOT IN
-?in: IN
-?is_not: IS NOT
-?is: IS
-?power_op: STAR_STAR
-?factor_op: PLUS | MINUS | TILDE
-?term_op: STAR | DIV | DIV_DIV | PERCENT
-?sum_op: PLUS | MINUS
-?shift_op: LSHIFT | RSHIFT
-?band: AMP
-?bxor: CARAT
-?bor: BAR
-?and: AND | DOUBLE_AMP
-?or: OR | DOUBLE_BAR
-?not: NOT | BANG
+comp_op: single_comp_op | multi_comp_op
+single_comp_op: EQUAL_EQUAL | BANG_EQUAL | LE | LT | GE | GT
+multi_comp_op: not_in | in | is_not | is | has | of
+not_in: NOT IN
+in: IN
+is_not: IS NOT
+is: IS
+has: HAS
+of: OF
+power_op: STAR_STAR
+factor_op: PLUS | MINUS | TILDE
+term_op: STAR | DIV | DIV_DIV | PERCENT
+sum_op: PLUS | MINUS
+shift_op: LSHIFT | RSHIFT
+band: AMP
+bxor: CARAT
+bor: BAR
+and: AND | DOUBLE_AMP
+or: OR | DOUBLE_BAR
+not: NOT | BANG
+assign_op: EQUAL
 ?newlines: NEWLINE [more_newline]
 ?more_newline: NEWLINE [more_newline]
-?assignop: EQUAL
 
-?true: TRUE
-?false: FALSE
-?null: NULL
-?name: NAME
+true: TRUE
+false: FALSE
+null: NULL
+name: NAME
+super: SUPER
+cls: CLS
+self: SELF
 
 ?terminator: NEWLINE
            | SEMI_COLON
@@ -181,7 +247,28 @@ S_SL_STRING: /([rbtf]{0,4})('(?!''))(.|\\\r?\n)*?(?<!\\)(\\\\)*?(')/i
 BIN: /0[b][01_]+/i
 OCT: /0[o][0-7_]+/i
 HEX: /0[x][0-9a-f_]+/i
-DECIMAL: /(0|[1-9_][0-9_]*)([\.][0-9_]+)?([e]([+-])?((0|[1-9_][0-9_]*)([\.][0-9_]+)?))?([a-z_][a-z0-9_]*)?/i
+DECIMAL: /(0|[1-9_][0-9_]*)([\.][0-9_]+)?([e]([+-])?((0|[1-9_][0-9_]*)([\.][0-9_]+)?))?([a-z_][a-z0-9]*)?/i
+OF: "of"
+HAS: "has"
+USING: "using"
+AS: "as"
+FN: "fn"
+PUBLIC: "public"
+PRIVATE: "private"
+PROTECTED: "protected"
+FINAL: "final"
+CLOSED: "closed"
+CONST: "const"
+INIT: "init"
+GET: "get"
+SET: "set"
+CLASS: "class"
+TRAIT: "trait"
+STATIC: "static"
+NAMESPACE: "namespace"
+CLS: "cls"
+SELF: "self"
+SUPER: "super"
 RETURN: "return"
 YIELD: "yield"
 CONTINUE: "continue"
@@ -238,19 +325,19 @@ CLOSE_BRACE: "}"
 COMMA: ","
 SEMI_COLON: ";"
 NEWLINE: /\r?\n/
-NAME.-1: /[a-z_][a-z0-9_\-]*/i
+NAME.-3: /[a-z_][a-z0-9_\-]*/i
 
 WS_INLINE: /[ \t\f\v]/
 LINE_CONT: /\\[ \t\f\v]*\r?\n/ //cribbed from https://github.com/lark-parser/lark/blob/master/examples/advanced/python2.lark
-SL_COMMENT: /#[^\n]*/
+SL_COMMENT.-2: /#[^\n]*/
 
 %ignore WS_INLINE
 %ignore LINE_CONT
 %ignore SL_COMMENT
 
 //I'm so annoyed with trying to figure this out, I'm just going to hack it
-ML_COMMENT_START: "#*"
-ML_COMMENT_END: "*#"
+ML_COMMENT_START.-1: "#*"
+ML_COMMENT_END.-1: "*#"
 %ignore ML_COMMENT_START
 %ignore ML_COMMENT_END
 
