@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
 import sys
+import ast
 import re
 from lark import Lark, Transformer, Tree
 from lark.lexer import Lexer, Token
-from lark.exceptions import UnexpectedCharacters, LexError, ParseError
+from lark.exceptions import UnexpectedCharacters, UnexpectedInput, LexError, ParseError, VisitError
 from lark.visitors import Transformer_InPlace
 rich_imported = False
 try:
@@ -21,15 +22,71 @@ def tree_print(tree):
 
 class LexMatch:
     def __init__(self, terminal):
-        self.pattern = re.compile(terminal.pattern.to_regexp())
+        self.pattern_str = terminal.pattern.to_regexp()
+        self.pattern = re.compile(self.pattern_str)
         self.priority = terminal.priority
 
+    def search(self, string, start_pos=0, end_pos=None):
+        if end_pos is None:
+            end_pos = len(string)
+        return self.pattern.search(string, start_pos, end_pos)
+
+    def match(self, string, start_pos=0, end_pos=None):
+        if end_pos is None:
+            end_pos = len(string)
+        return self.pattern.match(string, start_pos, end_pos)
+
+    def __str__(self):
+        return "{}".format(self.pattern_str)
+
+    def __repr__(self):
+        return self.__str__()
+
+class HognoseLexerError(LexError, UnexpectedInput):
+    def __init__(self, message, seq, lex_pos, line, column, **kwargs):
+        super().__init__()
+
+        self.line = line
+        self.column = column
+        self.pos_in_stream = lex_pos
+        self.message = message
+        self.format_dict = kwargs
+
+        if isinstance(seq, bytes):
+            self.char = seq[lex_pos:lex_pos + 1].decode("ascii", "backslashreplace")
+        else:
+            self.char = seq[lex_pos]
+        self._context = self.get_context(seq)
+
+    def __str__(self):
+        format_dict = self.format_dict
+        if "{char}" in self.message:
+            format_dict["char"] = self.char
+        message = self.message.format(**format_dict)
+        message += ", at line {line} col {col}".format(line=self.line, col=self.column)
+        message += '\n\n' + self._context
+        return message
+
 class HognoseLexer(Lexer):
+    special = {
+        "ML_COMMENT_START": "multiline comment start",
+        "ML_COMMENT_END": "multiline comment end"
+    }
+
     def __init__(self, lexer_conf):
         self.ignore = lexer_conf.ignore
         self.patterns = {}
+        specials_needed = list(self.special.keys())
         for terminal in lexer_conf.terminals:
-            self.patterns[terminal.name] = LexMatch(terminal)
+            terminal_name = terminal.name
+            if terminal_name in self.special:
+                if terminal_name in specials_needed:
+                    specials_needed.remove(terminal_name)
+                setattr(self, terminal_name.lower(), LexMatch(terminal))
+            else:
+                self.patterns[terminal.name] = LexMatch(terminal)
+        if len(specials_needed):
+            raise LexError("No {} specified".format(" ,".join(["{} symbol".format(self.special[x]) for x in specials_needed])))
 
     def get_token_match(self, data):
         matches = {}
@@ -63,18 +120,71 @@ class HognoseLexer(Lexer):
         if highest_prio is not None:
             lex_match = matches[highest_prio][matches[highest_prio]["longest"]]
             if len(lex_match) > 1:
-                raise LexError("Multiple equal length matches: {} in the current parser context, at line {} col {}".format(
-                               [(x.type, x.value) for x in lex_match], self.line, self.col))
+                raise HognoseLexerError("Multiple equal length matches: {matches}", self.original_data,
+                                        self.pos, self.line, self.col, matches=[(x.type, x.value) for x in lex_match])
             else:
                 return lex_match[0]
+        raise HognoseLexerError("Unknown symbol '{char}'", self.original_data, self.pos, self.line, self.col)
+
+    def calc_new_pos_col_line(self, input_text, new_text_pos, old_text_pos=0, old_col=1, old_line=1):
+        newline_count = input_text.count('\n', old_text_pos, new_text_pos)
+        col = old_col
+        line = old_line
+        if newline_count != -1:
+            line += newline_count
+            col = new_text_pos - input_text.rfind('\n', old_text_pos, new_text_pos)
         else:
-            raise UnexpectedCharacters(data, self.pos, self.line, self.column)
+            col += new_text_pos - old_text_pos
+        return col, line, new_text_pos
+
+    def remove_ml_comment(self, input_text):
+        ret_text = input_text
+        ml_comment_stack = 0
+        text_pos = 0
+        col = 1
+        line = 1
+        last_opening_symbol_pos = None
+        text_len = len(ret_text)
+        while ml_comment_start_match := self.ml_comment_start.search(ret_text):
+            col, line, text_pos = self.calc_new_pos_col_line(ret_text, ml_comment_start_match.start(), text_pos, col, line)
+            last_opening_symbol_pos = (text_pos, line, col)
+            while text_pos < text_len:
+                advance_amount = 1
+                if commenter_match := self.ml_comment_start.match(ret_text, text_pos):
+                    ml_comment_stack += 1
+                    advance_amount = commenter_match.end() - commenter_match.start()
+                elif commenter_match := self.ml_comment_end.match(ret_text, text_pos):
+                    ml_comment_stack -= 1
+                    advance_amount = commenter_match.end() - commenter_match.start()
+
+                replacement = "".join([ret_text[i] if ret_text[i].isspace() else ' ' for i in range(text_pos, text_pos + advance_amount)])
+                ret_text = ret_text[:text_pos] + replacement + ret_text[text_pos + advance_amount:]
+                col, line, text_pos = self.calc_new_pos_col_line(ret_text, text_pos + advance_amount, text_pos, col, line)
+
+                if ml_comment_stack == 0:
+                    break
+
+            if ml_comment_stack != 0:
+                raise HognoseLexerError("Unmatched multi-line comment opening symbol", self.original_data,
+                                        last_opening_symbol_pos[0], last_opening_symbol_pos[1], last_opening_symbol_pos[2])
+
+        if ml_comment_end_match := self.ml_comment_end.search(ret_text, text_pos):
+            col, line, text_pos = self.calc_new_pos_col_line(ret_text, ml_comment_end_match.start(), text_pos, col, line)
+            raise HognoseLexerError("Unmatched multi-line comment closing symbol", self.original_data, text_pos, col, line)
+        return ret_text
+
+    def preprocess(self, input_text):
+        ret_text = input_text
+        ret_text = self.remove_ml_comment(input_text)
+        return ret_text
 
     def lex(self, data):
+        self.original_data = data
         tokens = []
         self.col = 1
         self.line = 1
         self.pos = 0
+        data = self.preprocess(data)
         while len(data) > 0:
             match = self.get_token_match(data)
             data = data[len(str(match.value)):]
@@ -96,8 +206,9 @@ class HognosePostParse(Transformer_InPlace):
         raise ParseError("Don't know how to deal with this ambiguity yet: {}".format(tree))
 
     def _ambig(self, tree):
-        if len(tree) == 1:
+        if isinstance(tree, list) and len(tree) == 1:
             return tree[0]
+        print(tree)
         ambig_names = set([x.data.value for x in tree])
         if len(ambig_names) > 1:
             raise ParseError("Cannot resolve ambiguity for more than one rule type: {}".format(list(ambig_names)))
@@ -195,8 +306,43 @@ input_texts = [
                 e
     elfor b in c
         b
+    """,
     """
+    a = 2e1 + 3e-5.1i - z
+    b = "cheese \\" \\
+    eez"
+    c = r'''fries
+    '''
+    d = []
+    e = [:]
+    f = [
+        1,
+        'cheese'
+    ]
+    g = [
+        b: a,
+        c: f,
 
+    ]
+    """,
+    """
+    d = [];;;
+
+
+    """,
+    """
+    # cheese
+    d = [] #fries
+    e = [:]
+    # e = []
+    """,
+    """
+    #* #* #* *# *#
+
+    *#a=1#**#
+
+    d=[]
+    """
 ]
 
 #with open(sys.argv[1]) as f:
@@ -205,6 +351,12 @@ input_texts = [
 if input_text is None:
     for input_text in input_texts:
         print("-"*80)
-        print(input_text)
-        parse_res = HognosePostParse().transform(parser.parse(input_text))
+        for line_no, line in enumerate(input_text.splitlines()):
+            print("{}: {}".format(line_no + 1, line))
+        raw_parse_res = parser.parse(input_text)
+        try:
+            parse_res = HognosePostParse().transform(raw_parse_res)
+        except VisitError as e:
+            tree_print(raw_parse_res)
+            raise e from None
         tree_print(parse_res)

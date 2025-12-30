@@ -1,24 +1,23 @@
 ?start: expr_list
 
-?term_expr: newlines [more_term_expr]
-          | SEMI_COLON [more_term_expr]
-?more_term_expr: newlines [more_term_expr]
-               | SEMI_COLON [more_term_expr]
-?expr_list: [newlines] expr term_expr [expr_list]
-
+?expr_list: terminated_expr [expr_list]
+?terminated_expr: [expr] terminator
 ?expr: assign
 
 ?type_expr: COLON [newlines] arith
-?assign: name [newlines] [type_expr] assignop [newlines] starred_expr
-       | starred_expr
+?assign: primary [newlines] [type_expr] assignop [newlines] group
+       | group
 
-?starred_expr: STAR group
-             | STAR_STAR group
-             | group
+?group: starred_expr more_group [COMMA]
+      | starred_expr
+?more_group: [newlines] COMMA [newlines] starred_expr [more_group]
 
-?group: block more_group [COMMA]
-      | block
-?more_group: [newlines] COMMA [newlines] block [more_group]
+?starred_expr: single_star_expr
+             | double_star_expr
+             | block
+
+?single_star_expr: STAR block
+?double_star_expr: STAR_STAR block
 
 ?block: OPEN_BRACE expr_list CLOSE_BRACE
       | control
@@ -81,10 +80,16 @@
         | atom
 
 ?call_args: OPEN_PAREN [newlines] [call_args_body] CLOSE_PAREN
-?call_args_body: TODO_CALL_ARGS [newlines]
+?call_args_body: call_args_ele [more_call_args] [newlines]
+?more_call_args: [newlines] COMMA [newlines] call_args_ele [newlines] [more_call_args]
+?call_args_ele: name [newlines] EQUAL [newlines] starred_expr
+              | starred_expr
 
-?slice: OPEN_SQUARE [newlines] [slice_body] CLOSE_SQUARE
-?slice_body: TODO_SLICE_BODY [newlines]
+?slice: OPEN_SQUARE [newlines] slice_body [newlines] CLOSE_SQUARE
+?slice_body: slice_expr [newlines] [more_slice]
+?more_slice: COMMA [newlines] slice_expr [newlines] [more_slice]
+?slice_expr: [starred_expr] [newlines] COLON [newlines] [starred_expr] [slice_incr_expr]
+?slice_incr_expr: [newlines] COLON [newlines] [starred_expr]
 
 ?atom: name
      | true
@@ -95,14 +100,35 @@
      | parens
      | list_or_dict
 
-?parens: OPEN_PAREN [newlines] starred_expr [newlines] CLOSE_PAREN
+?parens: OPEN_PAREN [newlines] group [newlines] CLOSE_PAREN
 
-?open_list_or_dict: OPEN_SQUARE [newlines]
-?close_list_or_dict: [newlines] CLOSE_SQUARE
-?list_or_dict: open_list_or_dict list_body close_list_or_dict
-             | open_list_or_dict dict_body close_list_or_dict
-?list_body: TODO_LIST
-?dict_body: TODO_DICT
+?list_or_dict: OPEN_SQUARE [newlines] [list_or_dict_body] CLOSE_SQUARE
+?list_or_dict_body: list_or_dict_body_inner [newlines]
+?list_or_dict_body_inner: list_body
+                        | dict_body
+?list_body: starred_expr [more_list_body]
+?more_list_body: [newlines] COMMA [more_list_body_inner]
+?more_list_body_inner: [newlines] starred_expr [more_list_body]
+?dict_body: starred_expr [newlines] COLON [newlines] starred_expr [more_dict_body]
+          | COLON
+?more_dict_element: starred_expr [newlines] COLON [newlines] starred_expr
+                  | double_star_expr
+?more_dict_body: [newlines] COMMA [more_dict_body_inner]
+?more_dict_body_inner: [newlines] more_dict_element [more_dict_body]
+
+?number: bin
+       | oct
+       | hex
+       | decimal
+
+?bin: BIN
+?oct: OCT
+?hex: HEX
+?decimal: DECIMAL
+?string: D_ML_STRING
+       | S_ML_STRING
+       | D_SL_STRING
+       | S_SL_STRING
 
 ?comp_op: single_comp_op | multi_comp_op
 ?single_comp_op: EQUAL_EQUAL | BANG_EQUAL | LE | LT | GE | GT
@@ -129,16 +155,20 @@
 ?true: TRUE
 ?false: FALSE
 ?null: NULL
-?string: TODO_STRING
-?number: TODO_NUMBER
 ?name: NAME
 
-TODO_CALL_ARGS: "todo_call_args"
-TODO_SLICE_BODY: "todo_slice_body"
-TODO_LIST: "todo_list"
-TODO_DICT: "todo_dict"
-TODO_STRING: "todo_string"
-TODO_NUMBER: "todo_number"
+?terminator: NEWLINE
+           | SEMI_COLON
+
+// Below largly cribbed from https://github.com/lark-parser/lark/blob/master/lark/grammars/python.lark
+D_ML_STRING: /([rbtf]{0,4})(""").*?(?<!\\)(\\\\)*?(""")/is
+S_ML_STRING: /([rbtf]{0,4})(''').*?(?<!\\)(\\\\)*?(''')/is
+D_SL_STRING: /([rbtf]{0,4})("(?!""))(.|\\\r?\n)*?(?<!\\)(\\\\)*?(")/i
+S_SL_STRING: /([rbtf]{0,4})('(?!''))(.|\\\r?\n)*?(?<!\\)(\\\\)*?(')/i
+BIN: /0[b][01_]+/i
+OCT: /0[o][0-7_]+/i
+HEX: /0[x][0-9a-f_]+/i
+DECIMAL: /(0|[1-9_][0-9_]*)([\.][0-9_]+)?([e]([+-])?((0|[1-9_][0-9_]*)([\.][0-9_]+)?))?([a-z_][a-z0-9_]*)?/i
 TRUE: "true"
 FALSE: "false"
 NULL: "null"
@@ -187,9 +217,20 @@ OPEN_BRACE: "{"
 CLOSE_BRACE: "}"
 COMMA: ","
 SEMI_COLON: ";"
-NEWLINE: "\n"
-NAME.-1: /[a-zA-Z_][a-zA-Z0-9_\-]*/
+NEWLINE: /\r?\n/
+NAME.-1: /[a-z_][a-z0-9_\-]*/i
 
-WS_INLINE: /[ \t\v]/
+WS_INLINE: /[ \t\f\v]/
+LINE_CONT: /\\[ \t\f\v]*\r?\n/ //cribbed from https://github.com/lark-parser/lark/blob/master/examples/advanced/python2.lark
+SL_COMMENT: /#[^\n]*/
 
 %ignore WS_INLINE
+%ignore LINE_CONT
+%ignore SL_COMMENT
+
+//I'm so annoyed with trying to figure this out, I'm just going to hack it
+ML_COMMENT_START: "#*"
+ML_COMMENT_END: "*#"
+%ignore ML_COMMENT_START
+%ignore ML_COMMENT_END
+
