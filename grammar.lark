@@ -1,8 +1,21 @@
 ?start: expr_list
 
 ?expr_list: terminated_expr [expr_list]
-?terminated_expr: [expr] terminator
-?expr: assign
+?label: name COLON [newlines]
+?terminated_expr: [label] [expr] terminator
+?expr: exit_expr
+
+?exit_expr: exit_type [exit_value] [exit_direction]
+          | assign
+?exit_value: [newlines] assign
+?exit_type: RETURN
+          | YIELD
+          | CONTINUE
+          | BREAK
+          | LEAVE
+          | DEFER
+
+?exit_direction: [newlines] TO [newlines] name
 
 ?type_expr: COLON [newlines] arith
 ?assign: primary [newlines] [type_expr] assignop [newlines] group
@@ -169,6 +182,13 @@ BIN: /0[b][01_]+/i
 OCT: /0[o][0-7_]+/i
 HEX: /0[x][0-9a-f_]+/i
 DECIMAL: /(0|[1-9_][0-9_]*)([\.][0-9_]+)?([e]([+-])?((0|[1-9_][0-9_]*)([\.][0-9_]+)?))?([a-z_][a-z0-9_]*)?/i
+RETURN: "return"
+YIELD: "yield"
+CONTINUE: "continue"
+BREAK: "break"
+LEAVE: "leave"
+DEFER: "defer"
+TO: "to"
 TRUE: "true"
 FALSE: "false"
 NULL: "null"

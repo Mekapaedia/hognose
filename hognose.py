@@ -74,6 +74,7 @@ class HognoseLexer(Lexer):
     }
 
     def __init__(self, lexer_conf):
+        print(lexer_conf.terminals_by_name)
         self.ignore = lexer_conf.ignore
         self.patterns = {}
         specials_needed = list(self.special.keys())
@@ -87,6 +88,7 @@ class HognoseLexer(Lexer):
                 self.patterns[terminal.name] = LexMatch(terminal)
         if len(specials_needed):
             raise LexError("No {} specified".format(" ,".join(["{} symbol".format(self.special[x]) for x in specials_needed])))
+        print(self.patterns)
 
     def get_token_match(self, data):
         matches = {}
@@ -208,7 +210,6 @@ class HognosePostParse(Transformer_InPlace):
     def _ambig(self, tree):
         if isinstance(tree, list) and len(tree) == 1:
             return tree[0]
-        print(tree)
         ambig_names = set([x.data.value for x in tree])
         if len(ambig_names) > 1:
             raise ParseError("Cannot resolve ambiguity for more than one rule type: {}".format(list(ambig_names)))
@@ -342,6 +343,10 @@ input_texts = [
     *#a=1#**#
 
     d=[]
+    """,
+    """
+    cheese: a: fries = 1
+    return to cheese
     """
 ]
 
