@@ -300,6 +300,45 @@ class HognoseASTTransform(Transformer):
         ret_tree.data = "call_args"
         return ret_tree
 
+class LiteralString:
+    def __init__(self, value):
+        self.value = str(value)
+
+    def __str__(self):
+        return "LiteralString: '{}'".format(self.value)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return self.value
+
+class LiteralFloat:
+    def __init__(self, value):
+        self.value = float(value)
+
+    def __str__(self):
+        return "LiteralFloat: {}".format(self.value)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return self.value
+
+class LiteralInt:
+    def __init__(self, value):
+        self.value = int(value)
+
+    def __str__(self):
+        return "LiteralInt: {}".format(self.value)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return self.value
+
 class NameRef:
     def __init__(self, name):
         self.name = name
@@ -365,8 +404,8 @@ class FuncCall:
         return self.__str__()
 
     def eval(self, symbol_table):
-        pos_args = [x.eval(symbol_table) if hasattr(x, "eval") else x for x in self.args.pos_args]
-        kw_args = {k: v.eval(symbol_table) if hasattr(v, "eval") else v for k, v in self.args.kw_args.items()}
+        pos_args = [x.eval(symbol_table) for x in self.args.pos_args]
+        kw_args = {k: v.eval(symbol_table) for k, v in self.args.kw_args.items()}
         callee = self.callee.eval(symbol_table) if hasattr(self.callee, "eval") else self.callee
         return callee(*pos_args, **kw_args)
 
@@ -383,8 +422,8 @@ class BinOp:
         return self.__str__()
 
     def eval(self, symbol_table):
-        lhs_val = self.lhs.eval(symbol_table) if hasattr(self.lhs, "eval") else self.lhs
-        rhs_val = self.rhs.eval(symbol_table) if hasattr(self.rhs, "eval") else self.rhs
+        lhs_val = self.lhs.eval(symbol_table)
+        rhs_val = self.rhs.eval(symbol_table)
         if self.operator == "+":
             return lhs_val + rhs_val
         elif self.operator == "-":
@@ -416,7 +455,7 @@ class AssignOp:
             target = target.name
         elif not isinstance(target, str):
             target = target.eval(symbol_table)
-        symbol_table[target] = self.value.eval(symbol_table) if hasattr(self.value, "eval") else self.value
+        symbol_table[target] = self.value.eval(symbol_table)
         return symbol_table[target]
 
 class ExprList:
@@ -438,30 +477,28 @@ class ExprList:
 class HognoseASTGen(Interpreter):
 
     def bin(self, tree):
-        return int(tree.chidren[0].value, 2)
+        return LiteralInt(int(tree.chidren[0].value, 2))
 
     def oct(self, tree):
-        return int(tree.children[0].value, 16)
+        return LiteralInt(int(tree.children[0].value, 8))
 
     def hex(self, tree):
-        return int(tree.children[0].value, 16)
+        return LiteralInt(int(tree.children[0].value, 16))
 
     def decimal(self, tree):
         str_val = tree.children[0].value
-        val = None
         if "." in str_val:
-            val = float(str_val)
+            return LiteralFloat(float(str_val))
         else:
-            val = int(str_val)
-        return val
+            return LiteralInt(int(str_val))
 
     def d_sl_string(self, tree):
         new_string = tree.children[0].value[1:-1]
-        return str(new_string)
+        return LiteralString(str(new_string))
 
     def s_sl_string(self, tree):
         new_string = tree.children[0].value[1:-1]
-        return str(new_string)
+        return LiteralString(str(new_string))
 
     def string(self, tree):
         return self.visit(tree.children[0])
