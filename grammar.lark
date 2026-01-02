@@ -170,10 +170,11 @@ kw_arg: name [newlines] EQUAL [newlines] starred_expr
 pos_arg: starred_expr
 
 ?slice: OPEN_SQUARE [newlines] slice_body [newlines] CLOSE_SQUARE
-?slice_body: slice_expr [newlines] [more_slice]
-?more_slice: COMMA [newlines] slice_expr [newlines] [more_slice]
-?slice_expr: [starred_expr] [newlines] COLON [newlines] [starred_expr] [slice_incr_expr]
-?slice_incr_expr: [newlines] COLON [newlines] [starred_expr]
+?slice_body: slice_expr [more_slice]
+?more_slice: [newlines] COMMA [newlines] slice_expr [more_slice]
+?slice_expr: [starred_expr] [second_slice]
+?second_slice: [newlines] COLON [newlines] [starred_expr] [third_slice]
+?third_slice: [newlines] COLON [newlines] [starred_expr]
 
 ?atom: name
      | true
@@ -185,23 +186,25 @@ pos_arg: starred_expr
      | string
      | number
      | parens
-     | list_or_dict
+     | list
+     | dict
 
 ?parens: OPEN_PAREN [newlines] expr [newlines] CLOSE_PAREN
 
-?list_or_dict: OPEN_SQUARE [newlines] [list_or_dict_body] CLOSE_SQUARE
-?list_or_dict_body: list_or_dict_body_inner [newlines]
-?list_or_dict_body_inner: list_body
-                        | dict_body
-?list_body: starred_expr [more_list_body]
-?more_list_body: [newlines] COMMA [more_list_body_inner]
-?more_list_body_inner: [newlines] starred_expr [more_list_body]
-?dict_body: starred_expr [newlines] COLON [newlines] starred_expr [more_dict_body]
+list: OPEN_SQUARE [newlines] [list_body] CLOSE_SQUARE
+?list_body: list_elements [newlines]
+?list_elements: list_element [more_list_elements]
+?list_element: starred_expr
+?more_list_elements: [newlines] COMMA [newlines] list_element [more_list_elements]
+                   | COMMA
+
+?dict: OPEN_SQUARE [newlines] dict_body [newlines] CLOSE_SQUARE
+?dict_body: dict_elements
           | COLON
-?more_dict_element: starred_expr [newlines] COLON [newlines] starred_expr
-                  | double_star_expr
-?more_dict_body: [newlines] COMMA [more_dict_body_inner]
-?more_dict_body_inner: [newlines] more_dict_element [more_dict_body]
+?dict_elements: dict_element [more_dict_elements]
+dict_element: starred_expr [newlines] COLON [newlines] starred_expr
+?more_dict_elements: [newlines] COMMA [newlines] dict_element [more_dict_elements]
+                   | COMMA
 
 ?number: bin
        | oct
