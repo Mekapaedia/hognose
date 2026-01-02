@@ -1,6 +1,51 @@
-class: cheese,fries,chick=2
+a = 1
+b = 2
+
+if a > 2
+    print("cheese")
+elif b >= 2
+    print("fries")
+else
+    print("chicken")
+
+if a < 2
+    print("cheese")
+elif b <= 2
+    print("fries")
+
+b = b + 4
+
+while b > 0
 {
-    cheese
+    a = 1
+    print("b", b)
+    b = b - a
+    a = a - 1
+    c = a
+    if b < 3
+        break
+    print("c", c)
 }
 
-fib = fn recurse(a) return if a > 1 recurse(a-1) + recurse(a-2) else a (2)
+c = 3
+a = while c > 0
+{
+    c = c - 1
+    if c == 1
+        break
+}
+print(a)
+c = 3
+a = while c > 0
+{
+    c = c - 1
+    if c == 1
+        break 22
+}
+print(a)
+
+#*fn fries(a) {
+    print("fries func")
+    return a
+}
+print(fries(2))*#

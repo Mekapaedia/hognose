@@ -224,19 +224,6 @@ class HognosePostParse(Transformer_InPlace):
             raise ParseError("No ambiguity handler registered for {}\n\n{}".format(ambig_name, "\n\n".join([x.pretty() for x in tree])))
         return getattr(self, ambig_handler)(tree)
 
-    def term_expr(self, tree):
-        pass
-
-    def newlines(self, tree):
-        pass
-
-class ASTNode:
-    pass
-
-class ExprList:
-    def __init__(self):
-        self.exprs = []
-
 @v_args(tree=True)
 class HognoseASTTransform(Transformer):
 
@@ -300,6 +287,87 @@ class HognoseASTTransform(Transformer):
         ret_tree.data = "call_args"
         return ret_tree
 
+    def empty_expr(self, tree):
+        return Discard
+
+    def newlines(self, tree):
+        return Discard
+
+    def cond_body(self, tree):
+        if tree.children[1] is not None:
+            tree.children[1] = tree.children[1].children[0]
+        return tree
+
+    def elexpr(self, tree):
+        control_expr = tree.children[0]
+        cond_body = control_expr.children[2]
+        del control_expr.children[2]
+        control_expr.children.extend(cond_body.children)
+        return control_expr
+
+    def control_exprs(self, tree):
+        control_expr = tree.children[0]
+        cond_body = control_expr.children[2]
+        del control_expr.children[2]
+        control_expr.children.extend(cond_body.children)
+        return control_expr
+
+class Scope:
+    def __init__(self, parent_scope=None, loop_scope=False, function_scope=False, symbols=None):
+        self.parent_scope = parent_scope
+        self.loop_scope = loop_scope
+        self.function_scope = function_scope
+        self.symbols = symbols if symbols is not None else {}
+        self.break_called = False
+        self.break_val = None
+        self.defer_exprs = []
+
+    def get(self, symbol):
+        if symbol in self.symbols:
+            return self.symbols[symbol]
+        elif self.parent_scope is None:
+            raise ValueError("No symbol '{}'".format(symbol))
+        return self.parent_scope.get(symbol)
+
+    def assign(self, symbol, value):
+        if self.parent_scope is not None and self.parent_scope.has(symbol):
+            return self.parent_scope.assign(symbol, value)
+        self.symbols[symbol] = value
+        return self.symbols[symbol]
+
+    def has(self, symbol):
+        return symbol in self.symbols or self.parent_scope.has(symbol) if self.parent_scope is not None else False
+
+    def call_break(self, loop_break=False, function_break=False, loop_continue=False, break_val=None):
+        if not (loop_continue is True and self.loop_scope is True):
+            self.break_called = True
+            self.break_val = None
+        if self.parent_scope is not None:
+            if (loop_break or loop_continue) and self.loop_scope is False:
+                self.parent_scope.call_break(loop_break=loop_break, function_break=function_break, break_val=None)
+            elif function_break and self.function_break is False:
+                self.parent_scope.call_break(loop_break=loop_break, function_break=function_break, break_val=None)
+
+    def add_defer(self, defer_expr):
+        self.defer_exprs.insert(0, defer_expr)
+
+    def has_defers(self):
+        return len(self.defer_exprs) > 0
+
+    def run_defers(self):
+        last_res = None
+        for defer_expr in self.defer_exprs:
+            last_res = defer_expr.eval(self)
+        return last_res
+
+    def push_scope(self, loop_scope=False, function_scope=False, symbols=None):
+        return Scope(parent_scope=self, loop_scope=loop_scope, function_scope=function_scope, symbols=symbols)
+
+    def pop_scope(self):
+        if self.parent_scope is None:
+            raise ValueError("Cannot pop top scope")
+        return self.parent_scope
+
 class LiteralString:
     def __init__(self, value):
         self.value = str(value)
@@ -350,7 +418,7 @@ class NameRef:
         return self.__str__()
 
     def eval(self, symbol_table):
-        return symbol_table[self.name]
+        return symbol_table.get(self.name)
 
 class PosArg:
     def __init__(self, value):
@@ -432,8 +500,44 @@ class BinOp:
             return lhs_val * rhs_val
         elif self.operator == "/":
             return lhs_val / rhs_val
+        elif self.operator == '>':
+            return lhs_val > rhs_val
+        elif self.operator == '>=':
+            return lhs_val >= rhs_val
+        elif self.operator == '<':
+            return lhs_val < rhs_val
+        elif self.operator == '<=':
+            return lhs_val <= rhs_val
+        elif self.operator == '==':
+            return lhs_val == rhs_val
         else:
-            raise ValueError("Unhandled operator")
+            raise ValueError("Unhandled operator '{}'".format(self.operator))
+
+class ExitExpr:
+    def __init__(self, exit_type, exit_val, exit_dir):
+        self.exit_type = exit_type
+        self.exit_val = exit_val
+        self.exit_dir = exit_dir
+
+    def __str__(self):
+        return "Exit: {}{}{}".format(self.exit_type,
+               " ({})".format(self.exit_val) if self.exit_val is not None else "",
+               " to {}" if self.exit_dir is not None else "")
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        if self.exit_type == "defer":
+            symbol_table.add_defer(self.exit_val)
+        else:
+            loop_break = self.exit_type == "break"
+            loop_continue = self.exit_type == "continue"
+            function_break = self.exit_type == "return" or self.exit_type == "yield"
+            break_val = self.exit_val.eval(symbol_table) if self.exit_val is not None else None
+            symbol_table.call_break(loop_break=loop_break, loop_continue=loop_continue,
+                                    function_break=function_break, break_val=break_val)
+            return break_val
 
 class AssignOp:
     def __init__(self, target, type_expr, operator, value):
@@ -455,8 +559,61 @@ class AssignOp:
             target = target.name
         elif not isinstance(target, str):
             target = target.eval(symbol_table)
-        symbol_table[target] = self.value.eval(symbol_table)
-        return symbol_table[target]
+        return symbol_table.assign(target, self.value.eval(symbol_table))
+
+class IfExpr:
+    def __init__(self, guard, body, else_expr):
+        self.guard = guard
+        self.body = body
+        self.else_expr = else_expr
+
+    def __str__(self):
+        return "If: {} then {}{}".format(self.guard, self.body,
+                " else {}".format(self.else_expr) if self.else_expr is not None else "")
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        symbol_table = symbol_table.push_scope()
+        guard_res = self.guard.eval(symbol_table)
+        if guard_res is True:
+            val = self.body.eval(symbol_table)
+        symbol_table = symbol_table.pop_scope()
+        if guard_res:
+            return val
+        elif self.else_expr is not None:
+            return self.else_expr.eval(symbol_table)
+
+class WhileExpr:
+    def __init__(self, guard, body, else_expr):
+        self.guard = guard
+        self.body = body
+        self.else_expr = else_expr
+
+    def __str__(self):
+        return "If: {} then {}{}".format(self.guard, self.body,
+                " else {}".format(self.else_expr) if self.else_expr is not None else "")
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        at_least_once = False
+        last_val = None
+        symbol_table = symbol_table.push_scope(loop_scope=True)
+        while self.guard.eval(symbol_table) is True:
+            at_least_once = True
+            last_val = self.body.eval(symbol_table)
+            if symbol_table.break_called:
+                if symbol_table.break_val is not None:
+                    last_val = symbol_table.break_val
+                break
+        symbol_table = symbol_table.pop_scope()
+        if at_least_once:
+            return last_val
+        elif self.else_expr is not None:
+            return self.else_expr.eval(symbol_table)
 
 class ExprList:
     def __init__(self, exprs):
@@ -470,11 +627,20 @@ class ExprList:
 
     def eval(self, symbol_table):
         last_res = None
+        symbol_table = symbol_table.push_scope()
         for expr in self.exprs:
             last_res = expr.eval(symbol_table)
+            if symbol_table.break_called:
+                if symbol_table.break_val is not None:
+                    last_res = symbol_table.break_val
+                break
+        symbol_table = symbol_table.pop_scope()
         return last_res
 
 class HognoseASTGen(Interpreter):
+    def __default__(self, tree):
+        name = tree.data if hasattr(tree, "data") else tree.value
+        raise ValueError("No handler for '{}'".format(name))
 
     def bin(self, tree):
         return LiteralInt(int(tree.chidren[0].value, 2))
@@ -549,7 +715,13 @@ class HognoseASTGen(Interpreter):
     def assign_op(self, tree):
         return tree.children[0].value
 
-    def term(self, tree):
+    def single_comp_op(self, tree):
+        return tree.children[0].value
+
+    def comp_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def binop(self, tree):
         if len(tree.children) == 1:
             return tree
         operator = self.visit(tree.children[1])
@@ -557,13 +729,43 @@ class HognoseASTGen(Interpreter):
         rhs = self.visit(tree.children[2])
         return BinOp(lhs, operator, rhs)
 
+    def term(self, tree):
+        return self.binop(tree)
+
     def sum(self, tree):
-        if len(tree.children) == 1:
-            return tree
-        operator = self.visit(tree.children[1])
-        lhs = self.visit(tree.children[0])
-        rhs = self.visit(tree.children[2])
-        return BinOp(lhs, operator, rhs)
+        return self.binop(tree)
+
+    def comparison(self, tree):
+        return self.binop(tree)
+
+    def if_expr(self, tree):
+        guard = self.visit(tree.children[1])
+        body = self.visit(tree.children[2])
+        else_expr = self.visit(tree.children[3]) if tree.children[3] is not None else None
+        return IfExpr(guard, body, else_expr)
+
+    def elif_expr(self, tree):
+        return self.if_expr(tree)
+
+    def while_expr(self, tree):
+        guard = self.visit(tree.children[1])
+        body = self.visit(tree.children[2])
+        else_expr = self.visit(tree.children[3]) if tree.children[3] is not None else None
+        return WhileExpr(guard, body, else_expr)
+
+    def elwhile_expr(self, tree):
+        return self.while_expr(tree)
+
+    def else_expr(self, tree):
+        return self.visit(tree.children[1])
+
+    def exit_direction(self, tree):
+        return self.visit(tree.children[-1]).name
+
+    def exit_expr(self, tree):
+        return ExitExpr(tree.children[0].value,
+                        self.visit(tree.children[1]) if tree.children[1] is not None else None,
+                        self.visit(tree.children[2]) if tree.children[2] is not None else None)
 
     def assign(self, tree):
         target = self.visit(tree.children[0])
@@ -581,6 +783,9 @@ class HognoseASTGen(Interpreter):
         elif isinstance(expr_to_eval, Token):
             return expr_to_eval.value
         return expr_to_eval
+
+    def block(self, tree):
+        return self.visit(tree.children[1])
 
     def expr_list(self, tree):
         return ExprList([self.visit(child) for child in tree.children])
@@ -614,4 +819,4 @@ pre_ast = HognoseASTTransform(parser.rules).transform(parse_res)
 tree_print(pre_ast)
 tree_ast = HognoseASTGen().visit(pre_ast)
 tree_print(tree_ast)
-tree_ast.eval({'print': print})
+tree_ast.eval(Scope(symbols={"print": print}))

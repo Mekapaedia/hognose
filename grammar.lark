@@ -1,7 +1,10 @@
 ?start: expr_list
 
-?expr_list: terminated_expr [expr_list]
-?terminated_expr: [properties] [expr] terminator
+?expr_list: terminated_or_empty_expr [expr_list]
+?terminated_or_empty_expr: terminated_expr
+                         | empty_expr
+?terminated_expr: [properties] expr terminator
+empty_expr: terminator
 ?properties: property [newlines] [more_properties]
 ?more_properties: property [newlines] [more_properties]
 ?property: STATIC
@@ -21,9 +24,8 @@
            | exit_expr
 ?using_as: [newlines] AS [newlines] primary
 
-?exit_expr: exit_type [exit_value] [exit_direction]
+?exit_expr: exit_type [expr] [exit_direction]
           | assign
-?exit_value: [newlines] expr
 ?exit_type: RETURN
           | YIELD
           | CONTINUE
@@ -48,6 +50,7 @@
 ?double_star_expr: STAR_STAR structure_decl
 
 ?structure_decl: fndecl
+               | operatordecl
                | classdecl
                | namespacedecl
                | labeled_block
@@ -63,6 +66,7 @@
 ?star_param_ele: STAR name [type_expr]
 ?double_star_param_ele: STAR_STAR name [type_expr]
 ?param_default: [newlines] EQUAL starred_expr
+?operatordecl: OPERATOR op [newlines] OPEN_PAREN [newlines] [fnparams] CLOSE_PAREN [type_expr] [newlines] expr
 
 ?classdecl: class_type [name] [class_parents] [newlines] block
 ?class_type: CLASS | STATIC CLASS | TRAIT
@@ -79,31 +83,34 @@
 ?namespace_local: NAMESPACE [name] block
 
 ?label: name COLON [newlines]
-?labeled_block: [label] block
+?labeled_block: label block
+              | block
               | control
 ?block: OPEN_BRACE [expr_list] CLOSE_BRACE
 
-?control: [label] [newlines] control_exprs
+?control: labeled_control_exprs
+        | control_exprs
         | arith
-?control_exprs: if
-              | for
-              | while
+?labeled_control_exprs: label [newlines] control_exprs
+control_exprs: if_expr
+             | for_expr
+             | while_expr
 ?cond_body: [newlines] expr [elexpr_or_else]
-?if: IF expr cond_body
-?elif: ELIF expr cond_body
+?if_expr: IF expr cond_body
+?elif_expr: ELIF expr cond_body
 
-?for_expr: expr IN expr
-?for: FOR for_expr cond_body
-?elfor: ELFOR for_expr cond_body
+?for_in: expr IN expr
+?for_expr: FOR for_in cond_body
+?elfor_expr: ELFOR for_in cond_body
 
-?while: WHILE expr cond_body
-?elwhile: ELWHILE expr cond_body
+?while_expr: WHILE expr cond_body
+?elwhile_expr: ELWHILE expr cond_body
 
 ?elexpr_or_else: [newlines] elexpr_or_else_real
-?elexpr_or_else_real: elexpr | else
-?elexpr: elif | elfor | elwhile
+?elexpr_or_else_real: elexpr | else_expr
+elexpr: elif_expr | elfor_expr | elwhile_expr
 
-?else: ELSE [newlines] expr
+?else_expr: ELSE [newlines] expr
 
 // This bit is largely cribbed from https://docs.python.org/3/reference/grammar.html
 ?arith: disjunction
@@ -115,9 +122,8 @@
 ?more_conjunction: [newlines] and [more_conjunction]
 ?inversion: not [newlines] inversion
           | comparison
-?comparison: bitwise_or comp_op_bitwise_or
+?comparison: bitwise_or [newlines] comp_op [newlines] comparison
            | bitwise_or
-?comp_op_bitwise_or: [newlines] comp_op [newlines] bitwise_or [comp_op_bitwise_or]
 ?bitwise_or: bitwise_or [newlines] bor [newlines] bitwise_xor
            | bitwise_xor
 ?bitwise_xor: bitwise_xor [newlines] bxor [newlines] bitwise_and
@@ -225,6 +231,22 @@ and: AND | DOUBLE_AMP
 or: OR | DOUBLE_BAR
 not: NOT | BANG
 assign_op: EQUAL
+dot_op: DOT
+array_op: OPEN_SQUARE CLOSE_SQUARE
+op: comp_op
+  | power_op
+  | factor_op
+  | term_op
+  | sum_op
+  | shift_op
+  | band
+  | bor
+  | and
+  | or
+  | not
+  | assign_op
+  | array_op
+  | dot_op
 ?newlines: NEWLINE [more_newline]
 ?more_newline: NEWLINE [more_newline]
 
@@ -253,6 +275,7 @@ HAS: "has"
 USING: "using"
 AS: "as"
 FN: "fn"
+OPERATOR: "operator"
 PUBLIC: "public"
 PRIVATE: "private"
 PROTECTED: "protected"
