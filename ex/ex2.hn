@@ -44,8 +44,21 @@ a = while c > 0
 }
 print(a)
 
-#*fn fries(a) {
-    print("fries func")
-    return a
+fn empty() print("empty")
+
+fn fries(a, b='chicken') {
+    print("fries func", b)
+    if a == a
+        return a
+    print("shouldn't print")
 }
-print(fries(2))*#
+empty()
+print(fries(2))
+
+fib_in = 0
+fib_max = 10
+while fib_in < fib_max
+{
+    print("fib", fib_in, (fn fib(a) return if a > 1 fib(a-1) + fib(a-2) else a) (fib_in))
+    fib_in = fib_in + 1
+}

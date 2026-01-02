@@ -20,6 +20,9 @@ def tree_print(tree):
     else:
         print(tree.pretty())
 
+def format_or_empty(string, nullable):
+    return string.format(nullable) if nullable is not None else ""
+
 class LexMatch:
     def __init__(self, terminal):
         self.pattern_str = terminal.pattern.to_regexp()
@@ -283,7 +286,9 @@ class HognoseASTTransform(Transformer):
         tree.children = [x for x in tree.children if x is not None]
         del tree.children[0]
         del tree.children[-1]
-        ret_tree = tree.children[0]
+        ret_tree = tree
+        if len(tree.children) > 0:
+            ret_tree = tree.children[0]
         ret_tree.data = "call_args"
         return ret_tree
 
@@ -293,15 +298,13 @@ class HognoseASTTransform(Transformer):
     def newlines(self, tree):
         return Discard
 
-    def cond_body(self, tree):
-        if tree.children[1] is not None:
-            tree.children[1] = tree.children[1].children[0]
-        return tree
-
     def elexpr(self, tree):
         control_expr = tree.children[0]
         cond_body = control_expr.children[2]
         del control_expr.children[2]
+        elexpr = cond_body.children[1]
+        if elexpr is not None:
+            cond_body.children[1] = cond_body.children[1].children[0]
         control_expr.children.extend(cond_body.children)
         return control_expr
 
@@ -309,8 +312,32 @@ class HognoseASTTransform(Transformer):
         control_expr = tree.children[0]
         cond_body = control_expr.children[2]
         del control_expr.children[2]
+        elexpr = cond_body.children[1]
+        if elexpr is not None:
+            cond_body.children[1] = cond_body.children[1].children[0]
         control_expr.children.extend(cond_body.children)
         return control_expr
+
+    def more_param_eles(self, tree):
+        del tree.children[0]
+        del tree.children[0]
+        original_child = tree.children[1]
+        del tree.children[1]
+        if original_child is not None:
+            tree.children.extend(original_child.children)
+        return tree
+
+    def param_eles(self, tree):
+        original_child = tree.children[1]
+        del tree.children[1]
+        if original_child is not None:
+            tree.children.extend(original_child.children)
+        return tree
+
+    def param_ele(self, tree):
+        if tree.children[2] is not None:
+            tree.children[2] = tree.children[2].children[1]
+        return tree
 
 class Scope:
     def __init__(self, parent_scope=None, loop_scope=False, function_scope=False, symbols=None):
@@ -330,23 +357,26 @@ class Scope:
         return self.parent_scope.get(symbol)
 
     def assign(self, symbol, value):
-        if self.parent_scope is not None and self.parent_scope.has(symbol):
+        if symbol in self.symbols:
+            self.symbols[symbol] = value
+        elif self.parent_scope is not None and self.parent_scope.has(symbol):
             return self.parent_scope.assign(symbol, value)
-        self.symbols[symbol] = value
+        else:
+            self.symbols[symbol] = value
         return self.symbols[symbol]
 
     def has(self, symbol):
         return symbol in self.symbols or self.parent_scope.has(symbol) if self.parent_scope is not None else False
 
     def call_break(self, loop_break=False, function_break=False, loop_continue=False, break_val=None):
+        self.break_val = break_val
         if not (loop_continue is True and self.loop_scope is True):
             self.break_called = True
-            self.break_val = None
         if self.parent_scope is not None:
             if (loop_break or loop_continue) and self.loop_scope is False:
-                self.parent_scope.call_break(loop_break=loop_break, function_break=function_break, break_val=None)
-            elif function_break and self.function_break is False:
-                self.parent_scope.call_break(loop_break=loop_break, function_break=function_break, break_val=None)
+                self.parent_scope.call_break(loop_break=loop_break, function_break=function_break, break_val=break_val)
+            elif function_break and self.function_scope is False:
+                self.parent_scope.call_break(loop_break=loop_break, function_break=function_break, break_val=break_val)
 
     def add_defer(self, defer_expr):
         self.defer_exprs.insert(0, defer_expr)
@@ -425,7 +455,7 @@ class PosArg:
         self.value = value
 
     def __str__(self):
-        return str(self.value)
+        return "PosArg: {}".format(str(self.value))
 
     def __repr__(self):
         return self.__str__()
@@ -436,7 +466,7 @@ class KwArg:
         self.value = value
 
     def __str__(self):
-        return "{}={}".format(self.name, str(self.value))
+        return "KwArg: {}={}".format(self.name, str(self.value))
 
     def __repr__(self):
         return self.__str__()
@@ -472,10 +502,7 @@ class FuncCall:
         return self.__str__()
 
     def eval(self, symbol_table):
-        pos_args = [x.eval(symbol_table) for x in self.args.pos_args]
-        kw_args = {k: v.eval(symbol_table) for k, v in self.args.kw_args.items()}
-        callee = self.callee.eval(symbol_table) if hasattr(self.callee, "eval") else self.callee
-        return callee(*pos_args, **kw_args)
+        return self.callee.eval(symbol_table).eval(symbol_table, self.args.pos_args, self.args.kw_args)
 
 class BinOp:
     def __init__(self, lhs, operator, rhs):
@@ -579,10 +606,11 @@ class IfExpr:
         guard_res = self.guard.eval(symbol_table)
         if guard_res is True:
             val = self.body.eval(symbol_table)
-        symbol_table = symbol_table.pop_scope()
-        if guard_res:
+            if symbol_table.break_called and symbol_table.break_val is not None:
+                val = symbol_table.break_val
             return val
-        elif self.else_expr is not None:
+        symbol_table = symbol_table.pop_scope()
+        if self.else_expr is not None:
             return self.else_expr.eval(symbol_table)
 
 class WhileExpr:
@@ -615,6 +643,141 @@ class WhileExpr:
         elif self.else_expr is not None:
             return self.else_expr.eval(symbol_table)
 
+class FnDef:
+    def __init__(self, body, pos_args_names=None, args=None, va_args_name=None, va_kw_args_name=None, type_expr=None):
+        self.body = body
+        self.type_expr = type_expr
+        self.pos_args_names = pos_args_names if pos_args_names is not None else []
+        self.args = args if args is not None else {}
+        self.va_args_name = va_args_name
+        self.va_kw_args_name = va_kw_args_name
+
+    def __str__(self):
+        return "FnDef: ({}){}".format(format_or_empty("{}", self.args), self.body)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval_args(self, symbol_table, pos_args, kw_args):
+        if pos_args is None:
+            pos_args = []
+        if kw_args is None:
+            kw_args = {}
+        new_args = {}
+        if len(pos_args) > len(self.pos_args_names) and self.va_args_name is None:
+            raise Exception("Function takes a maximum of {} positional arguments, not {}".format(len(self.pos_args_names), len(pos_args)))
+        if self.va_args_name is not None:
+            new_args[self.va_args_name] = []
+        for pos_arg_num, pos_arg in enumerate(pos_args):
+            arg_val = pos_arg.eval(symbol_table)
+            if pos_arg_num >= len(self.pos_args_names):
+                new_args[self.va_args_name].append(arg_val)
+            else:
+                new_args[self.pos_args_names[pos_arg_num]] = arg_val
+        if self.va_kw_args_name is not None:
+            new_args[self.va_kw_args_name] = {}
+        for arg_name, arg_val in kw_args.items():
+            arg_val = arg_val.eval(symbol_table)
+            if arg_name in self.args:
+                if arg_name in new_args:
+                    raise Exception("Multiple definitions for argument '{}'".format(arg_name))
+                elif self.args[arg_name].pos_only is True:
+                    raise Exception("Argument '{}' is positional-only".format(arg_name))
+            elif self.va_kw_args_name is not None:
+                new_args[self.va_kw_args_name][arg_name] = arg_val
+            else:
+                raise Exception("Unknown arg name '{}'".format(arg_name))
+        for arg_name, arg_val in self.args.items():
+            if arg_name not in new_args:
+                if self.args[arg_name].default is not None:
+                    new_args[arg_name] = self.args[arg_name].default.eval(symbol_table)
+                else:
+                    raise Exception("Function missing value for argument '{}'".format(arg_name))
+        return symbol_table.push_scope(function_scope=True, symbols=new_args)
+
+    def eval(self, symbol_table, pos_args=None, kw_args=None):
+        return self.body.eval(self.eval_args(symbol_table, pos_args, kw_args))
+
+class BuiltinFnDef(FnDef):
+    def __init__(self, builtinfn, **kwargs):
+        super().__init__(builtinfn, **kwargs)
+
+    def eval(self, symbol_table, pos_args=None, kw_args=None):
+        return self.body(*[x.eval(symbol_table) for x in pos_args], **{k: v.eval(symbol_table) for k, v in kw_args.items()})
+
+class DeclArg:
+    def __init__(self, name, default=None, type_expr=None, pos_only=False, kw_only=False):
+        self.name = name
+        self.default = default
+        self.pos_only = pos_only
+        self.kw_only = kw_only
+        self.type_expr = type_expr
+
+    def __str__(self):
+        return "DeclArg: {}{}".format(self.name, format_or_empty(" ={}", self.default))
+
+    def __repr__(self):
+        return self.__str__()
+
+class VaDeclArg:
+    def __init__(self, name, type_expr=None):
+        self.name = name
+        self.type_expr = type_expr
+
+    def __str__(self):
+        return "VaDeclArg: {}".format(self.name)
+
+    def __repr__(self):
+        return self.__str__()
+
+class KwVaDeclArg:
+    def __init__(self, name, type_expr=None):
+        self.name = name
+        self.type_expr = type_expr
+
+    def __str__(self):
+        return "KwVaDeclArg: {}".format(self.name)
+
+    def __repr__(self):
+        return self.__str__()
+
+class DeclArgList:
+    def __init__(self, args):
+        self.args = args if args is not None else []
+
+    def __str__(self):
+        return "DeclArgList: {}".format(", ".join([str(x) for x in self.args]))
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        pos_args_names = [x.name.name for x in self.args if x.kw_only is False]
+        args_dict = {v.name.name: v for v in self.args}
+        va_args_name = None
+        va_kw_args_name = None
+        return pos_args_names, args_dict, va_args_name, va_kw_args_name
+
+class FnDeclExpr:
+    def __init__(self, name, args, body, type_expr):
+        self.name = name
+        self.args = args
+        self.body = body
+        self.type_expr = type_expr
+
+    def __str__(self):
+        return "FnDecl: {}({}) {}".format(self.name if self.name is not None else "", self.args if self.args is not None else "", self.body)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        pos_args_names, args_dict, va_args_name, va_kw_args_name = self.args.eval(symbol_table)
+        fndef = FnDef(self.body, pos_args_names=pos_args_names, args=args_dict, va_args_name=va_args_name, va_kw_args_name=va_kw_args_name, type_expr=self.type_expr)
+        if self.name:
+            symbol_table.assign(self.name.name, fndef)
+        return fndef
+
 class ExprList:
     def __init__(self, exprs):
         self.exprs = list(exprs)
@@ -629,21 +792,59 @@ class ExprList:
         last_res = None
         symbol_table = symbol_table.push_scope()
         for expr in self.exprs:
-            last_res = expr.eval(symbol_table)
+            next_res = expr.eval(symbol_table)
             if symbol_table.break_called:
                 if symbol_table.break_val is not None:
                     last_res = symbol_table.break_val
+                elif next_res is not None:
+                    last_res = next_res
                 break
-        symbol_table = symbol_table.pop_scope()
+            last_res = next_res
         return last_res
 
+class Expr:
+    def __init__(self, expr):
+       self.expr = expr
+
+    def __str__(self):
+        return str(self.expr)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        ret_val = self.expr.eval(symbol_table)
+        if symbol_table.break_called:
+            if symbol_table.break_val is not None:
+                ret_val = symbol_table.break_val
+        return ret_val
+
 class HognoseASTGen(Interpreter):
+    def visit(self, tree, **kwargs):
+        return getattr(self, tree.data)(tree, **kwargs)
+
+    def visit_or_default(self, tree, default, **kwargs):
+        if tree is None:
+            return default
+        elif isinstance(tree, Tree):
+            return self.visit(tree, **kwargs)
+        elif isinstance(tree, Token):
+            return tree.value
+        else:
+            return tree
+
+    def visit_or_none(self, tree, **kwargs):
+        return self.visit_or_default(tree, None, **kwargs)
+
     def __default__(self, tree):
         name = tree.data if hasattr(tree, "data") else tree.value
         raise ValueError("No handler for '{}'".format(name))
 
+    def parens(self, tree):
+        return self.visit(tree.children[1])
+
     def bin(self, tree):
-        return LiteralInt(int(tree.chidren[0].value, 2))
+        return LiteralInt(int(tree.children[0].value, 2))
 
     def oct(self, tree):
         return LiteralInt(int(tree.children[0].value, 8))
@@ -767,6 +968,28 @@ class HognoseASTGen(Interpreter):
                         self.visit(tree.children[1]) if tree.children[1] is not None else None,
                         self.visit(tree.children[2]) if tree.children[2] is not None else None)
 
+    def param_eles(self, tree, pos_only=False, kw_only=False):
+        return [self.visit(x, pos_only=pos_only, kw_only=kw_only) for x in tree.children]
+
+    def param_ele(self, tree, pos_only=False, kw_only=False):
+        return DeclArg(self.visit(tree.children[0]),
+                       type_expr=self.visit_or_none(tree.children[1]),
+                       default=self.visit_or_none(tree.children[2]),
+                       pos_only=pos_only, kw_only=kw_only)
+
+    def pos_or_kw_args(self, tree):
+        args = self.visit(tree.children[0], pos_only=False, kw_only=False)
+        va_args_kw_only = self.visit_or_default(tree.children[1], [])
+        args.extend(va_args_kw_only)
+        return args
+
+    def fndecl(self, tree):
+        name = self.visit_or_none(tree.children[1])
+        args = DeclArgList(self.visit_or_none(tree.children[3]))
+        type_expr = self.visit_or_none(tree.children[5])
+        body = self.visit(tree.children[6])
+        return FnDeclExpr(name, args, body, type_expr)
+
     def assign(self, tree):
         target = self.visit(tree.children[0])
         type_expr = None
@@ -779,7 +1002,7 @@ class HognoseASTGen(Interpreter):
     def expr(self, tree):
         expr_to_eval = tree.children[0]
         if isinstance(expr_to_eval, Tree):
-            return self.visit(expr_to_eval)
+            return Expr(self.visit(expr_to_eval))
         elif isinstance(expr_to_eval, Token):
             return expr_to_eval.value
         return expr_to_eval
@@ -819,4 +1042,4 @@ pre_ast = HognoseASTTransform(parser.rules).transform(parse_res)
 tree_print(pre_ast)
 tree_ast = HognoseASTGen().visit(pre_ast)
 tree_print(tree_ast)
-tree_ast.eval(Scope(symbols={"print": print}))
+tree_ast.eval(Scope(symbols={"print": BuiltinFnDef(print)}))

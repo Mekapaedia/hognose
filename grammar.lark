@@ -55,14 +55,25 @@ empty_expr: terminator
                | namespacedecl
                | labeled_block
 ?fndecl: FN [name] [newlines] OPEN_PAREN [newlines] [fnparams] CLOSE_PAREN [type_expr] [newlines] expr
-?fnparams: param [newlines] [more_params]
-?more_params: COMMA [newlines] param [newlines] [more_params]
-?param: param_ele
-      | star_param_ele
-      | double_star_param_ele
-      | DIV
-      | STAR
-?param_ele: name [type_expr] [param_default]
+?fnparams: pos_only_params
+?pos_only_params: param_eles [newlines] COMMA [newlines] DIV [opt_pos_or_kw_args]
+                | pos_or_kw_args
+?opt_pos_or_kw_args: COMMA [newlines] pos_or_kw_args
+?pos_or_kw_args: param_eles [opt_va_args_kw_only]
+               | va_args_kw_only
+?opt_va_args_kw_only: COMMA [newlines] va_args_kw_only
+?va_args_kw_only: star_param_ele_or_star [opt_param_eles] [opt_kw_va_args]
+                | kw_va_args
+?star_param_ele_or_star: star_param_ele
+                       | STAR
+?opt_kw_va_args: COMMA [newlines] kw_va_args
+?kw_va_args: double_star_param_ele
+//?fnparams: param [newlines] [more_params]
+//?more_params: COMMA [newlines] param [newlines] [more_params]
+?opt_param_eles: COMMA [newlines] param_eles
+param_eles: param_ele [more_param_eles]
+param_ele: name [type_expr] [param_default]
+?more_param_eles: COMMA [newlines] param_ele [more_param_eles]
 ?star_param_ele: STAR name [type_expr]
 ?double_star_param_ele: STAR_STAR name [type_expr]
 ?param_default: [newlines] EQUAL starred_expr
@@ -348,7 +359,7 @@ CLOSE_BRACE: "}"
 COMMA: ","
 SEMI_COLON: ";"
 NEWLINE: /\r?\n/
-NAME.-3: /[a-z_][a-z0-9_\-]*/i
+NAME.-3: /[a-z_][a-z0-9_]*/i
 
 WS_INLINE: /[ \t\f\v]/
 LINE_CONT: /\\[ \t\f\v]*\r?\n/ //cribbed from https://github.com/lark-parser/lark/blob/master/examples/advanced/python2.lark
