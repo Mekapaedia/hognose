@@ -39,9 +39,10 @@ empty_expr: terminator
 ?assign: primary_assign [type_expr] [newlines] assign_op [newlines] expr
        | group
 
-?group: starred_expr more_group [COMMA]
+?group: starred_expr more_group
       | starred_expr
 ?more_group: [newlines] COMMA [newlines] starred_expr [more_group]
+           | COMMA
 
 ?starred_expr: single_star_expr
              | double_star_expr
@@ -124,7 +125,18 @@ elexpr: elif_expr | elfor_expr | elwhile_expr
 ?else_expr: ELSE [newlines] expr
 
 // This bit is largely cribbed from https://docs.python.org/3/reference/grammar.html
-?arith: disjunction
+?arith: range
+?range: range_start [range_step] [newlines] RANGE [newlines] range_end
+      | disjunction
+range_step: [newlines] RANGE [newlines] disjunction
+range_start: range_start_inner [closed_start_op]
+closed_start_op: [newlines] GT
+range_start_inner: disjunction
+                 | LT
+range_end: [closed_end_op] range_end_inner
+closed_end_op: LT [newlines]
+range_end_inner: disjunction
+               | GT
 ?disjunction: conjunction [newlines] more_disjunction
             | conjunction
 ?more_disjunction: [newlines] or [newlines] conjunction [more_disjunction]
@@ -169,12 +181,7 @@ primary: primary [newlines] access
 kw_arg: name [newlines] EQUAL [newlines] starred_expr
 pos_arg: starred_expr
 
-?slice: OPEN_SQUARE [newlines] slice_body [newlines] CLOSE_SQUARE
-?slice_body: slice_expr [more_slice]
-?more_slice: [newlines] COMMA [newlines] slice_expr [more_slice]
-?slice_expr: [starred_expr] [second_slice]
-?second_slice: [newlines] COLON [newlines] [starred_expr] [third_slice]
-?third_slice: [newlines] COLON [newlines] [starred_expr]
+?slice: OPEN_SQUARE [newlines] group [newlines] CLOSE_SQUARE
 
 ?atom: name
      | true
@@ -316,6 +323,7 @@ TO: "to"
 TRUE: "true"
 FALSE: "false"
 NULL: "null"
+RANGE: ".."
 DOT: "."
 TILDE: "~"
 PERCENT: "%"

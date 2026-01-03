@@ -404,45 +404,21 @@ class HognoseASTTransform(Transformer):
                 tree.children.extend(next_element.children)
         return tree
 
-    def third_slice(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        tree.children[0] = "OPEN" if tree.children[0] is None else tree.children[0] # FIXME
-        return tree
-
-    def second_slice(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        tree.children[0] = "OPEN" if tree.children[0] is None else tree.children[0] # FIXME
-        third_slice = tree.children[1]
-        if third_slice is not None:
-            del tree.children[1]
-            tree.children.extend(third_slice.children)
-        return tree
-
-    def slice_expr(self, tree):
-        tree.children[0] = "OPEN" if tree.children[0] is None else tree.children[0] # FIXME
-        second_slice = tree.children[1]
-        if second_slice is None:
-            tree.children.append(None)
-        else:
-            del tree.children[1]
-            tree.children.extend(second_slice.children)
-        return tree
-
-    def slice_body(self, tree):
-        return tree
-
-    def more_slice(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        next_slice = tree.children[1]
+    def group(self, tree):
+        next_group = tree.children[1]
         del tree.children[1]
-        if next_slice is not None:
-            tree.children.extend(next_slice.children)
+        if next_group is not None and not isinstance(next_group, Token):
+            tree.children.extend(next_group.children)
+        return tree
+
+    def more_group(self, tree):
+        del tree.children[0]
+        del tree.children[0]
+        del tree.children[0]
+        next_group = tree.children[1]
+        del tree.children[1]
+        if next_group is not None:
+            tree.children.extend(next_group.children)
         return tree
 
     def slice(self, tree):
@@ -450,12 +426,40 @@ class HognoseASTTransform(Transformer):
         del tree.children[0]
         del tree.children[-1]
         del tree.children[-1]
-        tree.children = [x for x in tree.children[0].children if x is not None]
-        if len(tree.children) > 1:
-            next_slice = tree.children[1]
-            del tree.children[1]
-            if next_slice is not None:
-                tree.children.extend(next_slice.children)
+        return tree
+
+    def range(self, tree):
+        del tree.children[2]
+        del tree.children[2]
+        del tree.children[2]
+        return tree
+
+    def range_start(self, tree):
+        if tree.children[0] is not None:
+            tree.children[0] = tree.children[0].children[0]
+            if isinstance(tree.children[0], Token) and tree.children[0].type == "LT":
+                tree.children[0] = None
+        if tree.children[1] is not None:
+            tree.children[1] = tree.children[1].children[0]
+        return tree
+
+    def range_end(self, tree):
+        if tree.children[0] is not None:
+            tree.children[0] = tree.children[0].children[0]
+        if tree.children[1] is not None:
+            tree.children[1] = tree.children[1].children[0]
+            if isinstance(tree.children[1], Token) and tree.children[1].type == "GT":
+                tree.children[1] = None
+        return tree
+
+    def range_step(self, tree):
+        del tree.children[0]
+        del tree.children[0]
+        del tree.children[-2]
+        return tree
+
+    def for_in(self, tree):
+        del tree.children[1]
         return tree
 
 class Scope:
@@ -475,8 +479,8 @@ class Scope:
             raise ValueError("No symbol '{}'".format(symbol))
         return self.parent_scope.get(symbol)
 
-    def assign(self, symbol, value):
-        if symbol in self.symbols:
+    def assign(self, symbol, value, immediate=False):
+        if symbol in self.symbols or immediate:
             self.symbols[symbol] = value
         elif self.parent_scope is not None and self.parent_scope.has(symbol):
             return self.parent_scope.assign(symbol, value)
@@ -593,78 +597,142 @@ class LiteralDict:
     def eval(self, symbol_table):
         return {k.eval(symbol_table): v.eval(symbol_table) for k, v in self.elements.items()}
 
-class SliceOpen:
-    pass
-
-class SliceElement:
-    def __init__(self, first_slice, second_slice=None, third_slice=None):
-        self.first_slice = first_slice
-        self.second_slice = second_slice
-        self.third_slice = third_slice
+class Group:
+    def __init__(self, exprs):
+        self.exprs = list(exprs)
 
     def __str__(self):
-        return "SliceElement: {}{}{}".format(self.first_slice, format_or_empty(":{}", self.second_slice), format_or_empty(":{}", self.third_slice))
+        return "Group: {}".format(", ".join([str(x) for x in self.exprs]))
 
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, target, assign=False, assign_val=None):
-        slice_ele = None
-        if self.second_slice is None and self.third_slice is None:
-            slice_ele = self.first_slice.eval(symbol_table)
-        else:
-            first_slice = None
-            if self.first_slice is not None and self.first_slice is not SliceOpen:
-                first_slice = self.first_slice.eval(symbol_table)
-            second_slice = None
-            if self.second_slice is not None and self.second_slice is not SliceOpen:
-                second_slice = self.second_slice.eval(symbol_table)
-            third_slice = None
-            if self.third_slice is not None and self.third_slice is not SliceOpen:
-                third_slice = self.third_slice.eval(symbol_table)
-            slice_ele = slice(first_slice, second_slice, third_slice)
-        if assign:
-            target[slice_ele] = assign_val
-        return target[slice_ele]
+    def eval(self, symbol_table):
+        return [x.eval(symbol_table) for x in self.exprs]
 
-class SliceElementList:
-    def __init__(self, slice_eles):
-        self.slice_eles = list(slice_eles)
+class Range:
+    def __init__(self, start, end, step, start_closed=False, end_closed=False):
+        self.start = start
+        self.end = end
+        self.step = step
+        self.start_closed = start_closed
+        self.end_closed = end_closed
+
+    def to_list(self):
+        start = self.start
+        if start is None:
+            start = 0 # FIXME
+        step = self.step
+        end = self.end
+        if step is None:
+            step = 1
+        if start is None:
+            start = 0
+        if end is None:
+            end = 0
+            if step < 0:
+                end = None if self.end_closed is False else 0
+        if self.start_closed is True:
+            start += step
+        if self.end_closed is True:
+            end -= step
+        return list(range(start, end + 1 if step > 0 else end, step))
+
+class RangeExpr:
+    def __init__(self, start, end, start_closed=False, end_closed=False, step=None):
+        self.start = start
+        self.end = end
+        self.start_closed = start_closed
+        self.end_closed = end_closed
+        self.step = step
 
     def __str__(self):
-        return "SliceElementList: {}".format(" ,".join([str(x) for x in self.slice_eles]))
+        return "Range: start{}:{} stop{}:{} step:{}".format(
+            self.start, "(closed)" if self.start_closed else "",
+            self.end, "(closed)" if self.end_closed else "",
+            self.step)
 
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, target, assign=False, assign_vals=[]):
-        ret = None
-        if len(self.slice_eles) == 1:
-            ret = self.slice_eles[0].eval(symbol_table, target, assign=assign, assign_val=assign_vals[0] if assign else None)
-        else:
-            ret = []
-            for assign_ele, slice_ele in enumerate(self.slice_eles):
-                ret.append(slice_ele.eval(symbol_table, target, assign=assign, assign_val=assign_vals[assign_ele] if assign else None))
-        return ret
+    def eval(self, symbol_table):
+        start = self.start.eval(symbol_table) if self.start is not None else None
+        step = self.step.eval(symbol_table) if self.step is not None else None
+        end = self.end.eval(symbol_table) if self.end is not None else None
+        return Range(start, end, step, start_closed=self.start_closed, end_closed=self.end_closed)
 
 class SliceExpr:
-    def __init__(self, target, slices, assign=False):
+    def __init__(self, target, slice):
         self.target = target
-        self.slices = slices
-        self.assign = assign
+        self.slice = slice
 
     def __str__(self):
-        return "SliceExpr: {}({})".format(self.target, self.slices)
+        return "SliceExpr: {}({})".format(self.target, self.slice)
 
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, assign=None, assign_vals=[]):
-        if assign is None:
-            assign = self.assign #maybe remove
-        if assign is True and not isinstance(assign_vals, list):
-            assign_vals = [assign_vals]
-        return self.slices.eval(symbol_table, self.target.eval(symbol_table), assign=assign, assign_vals=assign_vals)
+    def get_slice_eles(self, target, slice_eles):
+        start = slice_eles.start
+        step = slice_eles.step
+        end = slice_eles.end
+        if step is None:
+            step = 1
+        if start is None:
+            start = 0 if slice_eles.start_closed is False else step
+        if end is None:
+            end = len(target)
+            if step < 0:
+                end = None if slice_eles.end_closed is False else 0
+            elif slice_eles.end_closed is True:
+                end -= step
+        return start, step, end
+
+    def handle_assign(self, target, slice_ele, assign_val):
+        if isinstance(slice_ele, Range):
+            start, step, end = self.get_slice_eles(target, slice_ele)
+            target[start:end:step] = assign_val
+        else:
+            target[slice_ele] = assign_val
+        return target
+
+    def handle_slice(self, target, slice_ele):
+        if isinstance(slice_ele, Range):
+            start, step, end = self.get_slice_eles(target, slice_ele)
+            return target[start:end:step]
+        else:
+            return target[slice_ele]
+
+    def eval(self, symbol_table, assign=False, assign_val=None):
+        target = self.target.eval(symbol_table)
+        slice_eles = self.slice.eval(symbol_table)
+        ret_val = None
+        if isinstance(slice_eles, list):
+            if assign:
+                for val_ele, slice_ele in enumerate(slice_eles):
+                    val = assign_val
+                    if isinstance(assign_val, list) and len(assign_val) == len(slice_eles):
+                        val = assign_val[val_ele]
+                    target = self.handle_assign(target, slice_ele, val)
+            ret_val = [self.handle_slice(target, x) for x in slice_eles]
+        else:
+            if assign:
+                target = self.handle_assign(target, slice_eles, assign_val)
+            ret_val = self.handle_slice(target, slice_eles)
+        return ret_val
+
+class Slice:
+    def __init__(self, slice):
+        self.slice = slice
+
+    def __str__(self):
+        return "Slice: {}".format(self.slice)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return self.slice.eval(symbol_table)
 
 class NameRef:
     def __init__(self, name):
@@ -814,7 +882,7 @@ class AssignOp:
         if isinstance(target, NameRef):
             return symbol_table.assign(target.name, self.value.eval(symbol_table))
         elif isinstance(target, SliceExpr):
-            return target.eval(symbol_table, assign=True, assign_vals=self.value.eval(symbol_table))
+            return target.eval(symbol_table, assign=True, assign_val=self.value.eval(symbol_table))
 
 class IfExpr:
     def __init__(self, guard, body, else_expr):
@@ -1006,6 +1074,42 @@ class FnDeclExpr:
             symbol_table.assign(self.name.name, fndef)
         return fndef
 
+class ForExpr:
+    def __init__(self, induction_var, induction_expr, body, else_expr=None):
+        self.induction_var = induction_var
+        self.induction_expr = induction_expr
+        self.body = body
+        self.else_expr = else_expr
+
+    def __str__(self):
+        return "For: {} in {} do {}".format(self.induction_var,
+                                            self.induction_expr,
+                                            self.body)
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        at_least_once = False
+        last_val = None
+        induction_var = self.induction_var.expr.name # FIXME
+        symbol_table = symbol_table.push_scope(loop_scope=True)
+        induction_list = self.induction_expr.eval(symbol_table)
+        if isinstance(induction_list, Range): # FIXME
+            induction_list = induction_list.to_list()
+        for ele in induction_list:
+            at_least_once = True
+            symbol_table.assign(induction_var, ele, immediate=True)
+            last_val = self.body.eval(symbol_table)
+            if symbol_table.break_called:
+                if symbol_table.break_val is not None:
+                    last_val = symbol_table.break_val
+                break
+        symbol_table = symbol_table.pop_scope()
+        if at_least_once:
+            return last_val
+        elif self.else_expr is not None:
+            return self.else_expr.eval(symbol_table)
+
 class ExprList:
     def __init__(self, exprs):
         self.exprs = list(exprs)
@@ -1110,20 +1214,28 @@ class HognoseASTGen(Interpreter):
     def dict(self, tree):
         return LiteralDict({v.key: v.value for v in [self.visit(x) for x in tree.children]})
 
-    def slice_expr(self, tree):
-        first_slice = self.visit_or_none(tree.children[0])
-        if first_slice == "OPEN":
-            first_slice = SliceOpen
-        second_slice = self.visit_or_none(tree.children[1])
-        if second_slice == "OPEN":
-            second_slice = SliceOpen
-        third_slice = self.visit_or_none(tree.children[2])
-        if third_slice == "OPEN":
-            third_slice = SliceOpen
-        return SliceElement(first_slice, second_slice, third_slice)
+    def range_end(self, tree):
+        end = self.visit_or_none(tree.children[1])
+        end_closed = False if tree.children[0] is None else True
+        return end, end_closed
+
+    def range_step(self, tree):
+        return self.visit(tree.children[0])
+
+    def range_start(self, tree):
+        start = self.visit_or_none(tree.children[0])
+        start_closed = False if tree.children[1] is None else True
+        return start, start_closed
+
+    def range(self, tree):
+        start, start_closed = self.visit(tree.children[0])
+        step = self.visit_or_none(tree.children[1])
+        end, end_closed = self.visit(tree.children[2])
+        return RangeExpr(start=start, start_closed=start_closed,
+                         end=end, end_closed=end_closed, step=step)
 
     def slice(self, tree):
-        return SliceElementList([self.visit(x) for x in tree.children])
+        return Slice(self.visit(tree.children[0]))
 
     def pos_arg(self, tree):
         return PosArg(self.visit(tree.children[0]))
@@ -1144,8 +1256,8 @@ class HognoseASTGen(Interpreter):
             access = self.visit(tree.children[1])
         else:
             return ref
-        if isinstance(access, SliceElementList):
-            return SliceExpr(ref, access, assign=True)
+        if isinstance(access, Slice):
+            return SliceExpr(ref, access)
         else:
             raise ValueError("Haven't handled other stuff yet")
 
@@ -1158,7 +1270,7 @@ class HognoseASTGen(Interpreter):
             return ref
         if isinstance(access, CallArgs):
             return FuncCall(ref, access)
-        elif isinstance(access, SliceElementList):
+        elif isinstance(access, Slice):
             return SliceExpr(ref, access)
         else:
             raise ValueError("Haven't handled other stuff yet")
@@ -1254,6 +1366,18 @@ class HognoseASTGen(Interpreter):
         operator = self.visit(tree.children[2])
         value = self.visit(tree.children[3])
         return AssignOp(target, type_expr, operator, value)
+
+    def for_in(self, tree):
+        return self.visit(tree.children[0]), self.visit(tree.children[1])
+
+    def for_expr(self, tree):
+        induction_var, induction_expr = self.visit(tree.children[1])
+        body = self.visit(tree.children[2])
+        else_expr = self.visit_or_none(tree.children[3])
+        return ForExpr(induction_var, induction_expr, body, else_expr)
+
+    def group(self, tree):
+        return Group([self.visit(x) for x in tree.children])
 
     def expr(self, tree):
         expr_to_eval = tree.children[0]

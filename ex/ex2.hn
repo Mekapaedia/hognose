@@ -69,7 +69,8 @@ empty_dict = [:]
 list = [
     1,
     2,
-    "fries"
+    "fries",
+    "cheese"
 ]
 
 dict = [
@@ -84,4 +85,64 @@ dict["second"] = 3
 print(list[1], dict["second"])
 dict["fourth"] = ["nested": [1, 2], "other": 1]
 dict["fourth"]["nested"][0] = 9
-print(list[1:], dict["fourth"]["nested"][1, 0])
+print(list[1], list[2], dict["fourth"]["nested"][1, 0])
+
+print(list[0>..<3])
+print(list[0>..1..<3])
+print()
+print(list[0..1..<3])
+print(list[0..<3])
+print()
+print(list[0>..1..3])
+print(list[0>..3])
+print()
+print(list[0..3])
+print(list[0..1..3])
+print()
+print(list[<..3])
+print(list[<..1..3])
+print()
+print(list[<>..3])
+print(list[<>..1..3])
+print()
+print(list[<..<3])
+print(list[<..1..<3])
+print()
+print(list[<>..<3])
+print(list[<>..1..<3])
+print()
+print(list[0..>])
+print(list[0..1..>])
+print()
+print(list[0>..>])
+print(list[0>..1..>])
+print()
+print(list[0..<>])
+print(list[0..1..<>])
+print()
+print(list[0>..<>])
+print(list[0>..1..<>])
+print()
+print(list[<..>])
+print(list[<..1..>])
+print()
+print(list[<>..>])
+print(list[<>..1..>])
+print()
+print(list[<..<>])
+print(list[<..1..<>])
+print()
+print(list[<>..<>])
+print(list[<>..1..<>])
+print()
+
+
+for i in 1..<3
+    print(list[i])
+else
+    print("other")
+
+for i in 0>..<1
+    print(list[i])
+else
+    print("other")
