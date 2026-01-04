@@ -146,3 +146,42 @@ for i in 0>..<1
     print(list[i])
 else
     print("other")
+
+class a
+{
+    class inner
+    {
+        cheese = "chicken"
+    }
+    ele = 1
+    ele2 = inner()
+}
+
+class b: a
+{
+    ele3 = 2
+}
+
+class c
+{
+    ele4 = 3
+}
+
+class d: a, c { fn test() print("waaaa"); }
+
+obj = a()
+obj2 = a()
+print(obj.ele)
+obj.ele = 2
+print(obj.ele)
+print(obj2.ele)
+print(a.ele)
+print(obj.ele2.cheese)
+obj.ele2.cheese = "fries"
+print(obj.ele2.cheese)
+
+obj3 = b()
+obj4 = d()
+print(obj3.ele2.cheese, obj3.ele3)
+print(obj4.ele2.cheese, obj4.ele4)
+obj4.test()

@@ -69,8 +69,6 @@ empty_expr: terminator
                        | STAR
 ?opt_kw_va_args: COMMA [newlines] kw_va_args
 ?kw_va_args: double_star_param_ele
-//?fnparams: param [newlines] [more_params]
-//?more_params: COMMA [newlines] param [newlines] [more_params]
 ?opt_param_eles: COMMA [newlines] param_eles
 param_eles: param_ele [more_param_eles]
 param_ele: name [type_expr] [param_default]
@@ -82,9 +80,8 @@ param_ele: name [type_expr] [param_default]
 
 ?classdecl: class_type [name] [class_parents] [newlines] block
 ?class_type: CLASS | STATIC CLASS | TRAIT
-?class_parents: COLON [newlines] class_parents_body
-?class_parents_body: class_parent_ele [more_class_parents_body]
-?more_class_parents_body: [newlines] COMMA [newlines] class_parent_ele [more_class_parents_body]
+?class_parents: [newlines] COLON [newlines] class_parent_ele [more_class_parents]
+?more_class_parents: [newlines] COMMA [newlines] class_parent_ele [more_class_parents]
 ?class_parent_ele: name [class_parent_assign]
                  | classdecl
 ?class_parent_assign: [newlines] EQUAL [newlines] structure_decl

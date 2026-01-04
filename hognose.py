@@ -26,6 +26,8 @@ def format_or_empty(string, nullable):
 class LexMatch:
     def __init__(self, terminal):
         self.pattern_str = terminal.pattern.to_regexp()
+        if self.pattern_str.isalnum():
+            self.pattern_str = r'\b' + self.pattern_str + r'\b'
         self.pattern = re.compile(self.pattern_str)
         self.priority = terminal.priority
 
@@ -462,6 +464,34 @@ class HognoseASTTransform(Transformer):
         del tree.children[1]
         return tree
 
+    def classdecl(self, tree):
+        if len(tree.children) == 5 and tree.children[3] is None:
+            del tree.children[3]
+        return tree
+
+    def class_parents(self, tree):
+        del tree.children[0]
+        del tree.children[0]
+        del tree.children[0]
+        more_class_parents = tree.children[1]
+        del tree.children[1]
+        if more_class_parents is not None:
+            tree.children.extend(more_class_parents.children)
+        return tree
+
+    def more_class_parents(self, tree):
+        del tree.children[0]
+        del tree.children[0]
+        del tree.children[0]
+        more_class_parents = tree.children[1]
+        del tree.children[1]
+        if more_class_parents is not None:
+            tree.children.extend(more_class_parents.children)
+        return tree
+
+    def class_parent_ele(self, tree):
+        return tree
+
 class Scope:
     def __init__(self, parent_scope=None, loop_scope=False, function_scope=False, symbols=None):
         self.parent_scope = parent_scope
@@ -472,10 +502,10 @@ class Scope:
         self.break_val = None
         self.defer_exprs = []
 
-    def get(self, symbol):
+    def get(self, symbol, immediate=False):
         if symbol in self.symbols:
             return self.symbols[symbol]
-        elif self.parent_scope is None:
+        elif self.parent_scope is None or immediate is True:
             raise ValueError("No symbol '{}'".format(symbol))
         return self.parent_scope.get(symbol)
 
@@ -520,6 +550,19 @@ class Scope:
         if self.parent_scope is None:
             raise ValueError("Cannot pop top scope")
         return self.parent_scope
+
+    def copy(self, parent_scope=None, loop_scope=None, function_scope=None, symbols=None):
+        if symbols is None:
+            symbols = {**self.symbols}
+        else:
+            symbols = {**self.symbols, **symbols}
+        if parent_scope is None:
+            parent_scope = self.parent_scope
+        if loop_scope is None:
+            loop_scope = self.loop_scope
+        if function_scope is None:
+            function_scope = self.function_scope
+        return Scope(parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope, symbols=symbols)
 
 class LiteralString:
     def __init__(self, value):
@@ -734,6 +777,37 @@ class Slice:
     def eval(self, symbol_table):
         return self.slice.eval(symbol_table)
 
+class FieldAccessExpr:
+    def __init__(self, target, field):
+        self.target = target
+        self.field = field
+
+    def __str__(self):
+        return "FieldExpr: {}.{}".format(self.target, self.field)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table, assign=False, assign_val=None):
+        target = self.target.eval(symbol_table)
+        field_name = self.field.eval(symbol_table)
+        if assign:
+            target = target.assign_field(field_name, assign_val)
+        return target.get_field(field_name)
+
+class FieldAccess:
+    def __init__(self, field_access):
+        self.field_access = field_access
+
+    def __str__(self):
+        return "FieldAccess: {}".format(self.field_access)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return self.field_access.name
+
 class NameRef:
     def __init__(self, name):
         self.name = name
@@ -882,6 +956,8 @@ class AssignOp:
         if isinstance(target, NameRef):
             return symbol_table.assign(target.name, self.value.eval(symbol_table))
         elif isinstance(target, SliceExpr):
+            return target.eval(symbol_table, assign=True, assign_val=self.value.eval(symbol_table))
+        elif isinstance(target, FieldAccessExpr):
             return target.eval(symbol_table, assign=True, assign_val=self.value.eval(symbol_table))
 
 class IfExpr:
@@ -1110,6 +1186,61 @@ class ForExpr:
         elif self.else_expr is not None:
             return self.else_expr.eval(symbol_table)
 
+class ObjDef:
+    def __init__(self, obj_type, members, parents=None):
+        self.obj_type = obj_type
+        self.members = members
+        self.parents = parents
+
+    def __str__(self):
+        return "ObjDef: {}{}".format(self.obj_type, self.members)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def assign_field(self, field_name, assign_val):
+        self.members.assign(field_name, assign_val)
+        return self
+
+    def get_field(self, field_name):
+        return self.members.get(field_name, immediate=True)
+
+    def eval(self, symbol_table, pos_args=None, kw_args=None):
+        if self.obj_type == "class":
+            new_members = {}
+            if self.parents is not None:
+                for parent in self.parents:
+                    for symbol_name, obj in parent.members.symbols.items():
+                        new_members[symbol_name] = obj
+            new_members = {**new_members, **self.members.symbols}
+            return ObjDef("object", Scope(parent_scope=symbol_table, symbols=new_members))
+        else:
+            raise ValueError("Not class")
+
+class ClassDecl:
+    def __init__(self, class_type, name=None, body=None, parents=None):
+        self.class_type = class_type
+        self.name = name
+        self.body = body
+        self.parents = parents if parents is not None else []
+
+    def __str__(self):
+        return "ClassDecl: {}{}{}{}".format(self.class_type,
+                                          format_or_empty(" {}", self.name),
+                                          format_or_empty(" {}", self.body),
+                                          format_or_empty(": {}", self.parents))
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        class_members = self.body.eval(symbol_table, return_symbol_table=True)
+        parents = [x.eval(symbol_table) for x in self.parents]
+        classdef = ObjDef(self.class_type, class_members, parents=parents)
+        if self.name:
+            symbol_table.assign(self.name.name, classdef)
+        return classdef
+
 class ExprList:
     def __init__(self, exprs):
         self.exprs = list(exprs)
@@ -1120,7 +1251,7 @@ class ExprList:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
+    def eval(self, symbol_table, return_symbol_table=False):
         last_res = None
         symbol_table = symbol_table.push_scope()
         for expr in self.exprs:
@@ -1132,6 +1263,8 @@ class ExprList:
                     last_res = next_res
                 break
             last_res = next_res
+        if return_symbol_table:
+            return symbol_table
         return last_res
 
 class Expr:
@@ -1144,11 +1277,13 @@ class Expr:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
+    def eval(self, symbol_table, return_symbol_table=False):
         ret_val = self.expr.eval(symbol_table)
         if symbol_table.break_called:
             if symbol_table.break_val is not None:
                 ret_val = symbol_table.break_val
+        if return_symbol_table:
+            return symbol_table
         return ret_val
 
 class HognoseASTGen(Interpreter):
@@ -1234,6 +1369,9 @@ class HognoseASTGen(Interpreter):
         return RangeExpr(start=start, start_closed=start_closed,
                          end=end, end_closed=end_closed, step=step)
 
+    def field_access(self, tree):
+        return FieldAccess(self.visit(tree.children[1]))
+
     def slice(self, tree):
         return Slice(self.visit(tree.children[0]))
 
@@ -1258,6 +1396,8 @@ class HognoseASTGen(Interpreter):
             return ref
         if isinstance(access, Slice):
             return SliceExpr(ref, access)
+        elif isinstance(access, FieldAccess):
+            return FieldAccessExpr(ref, access)
         else:
             raise ValueError("Haven't handled other stuff yet")
 
@@ -1272,6 +1412,8 @@ class HognoseASTGen(Interpreter):
             return FuncCall(ref, access)
         elif isinstance(access, Slice):
             return SliceExpr(ref, access)
+        elif isinstance(access, FieldAccess):
+            return FieldAccessExpr(ref, access)
         else:
             raise ValueError("Haven't handled other stuff yet")
 
@@ -1358,6 +1500,20 @@ class HognoseASTGen(Interpreter):
         body = self.visit(tree.children[6])
         return FnDeclExpr(name, args, body, type_expr)
 
+    def class_parent_ele(self, tree):
+        return self.visit(tree.children[0]) # FIXME
+
+    def class_parents(self, tree):
+        return [self.visit(child) for child in tree.children]
+
+    def classdecl(self, tree):
+        rich.print(tree)
+        class_type = tree.children[0].value
+        name = self.visit_or_none(tree.children[1])
+        parents = self.visit_or_none(tree.children[2])
+        body = self.visit(tree.children[3])
+        return ClassDecl(class_type, name, body, parents=parents)
+
     def assign(self, tree):
         target = self.visit(tree.children[0])
         type_expr = None
@@ -1388,7 +1544,7 @@ class HognoseASTGen(Interpreter):
         return expr_to_eval
 
     def block(self, tree):
-        return self.visit(tree.children[1])
+        return self.visit(tree.children[1]) if tree.children[1] is not None else ExprList([])
 
     def expr_list(self, tree):
         return ExprList([self.visit(child) for child in tree.children])
