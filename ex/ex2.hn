@@ -159,7 +159,9 @@ class a
 
 class b: a
 {
+    static fries = "waaa"
     ele3 = 2
+    static fn fries_yell() print(fries)
 }
 
 class c
@@ -167,7 +169,7 @@ class c
     ele4 = 3
 }
 
-class d: b, c { fn test() print("waaa", self.ele3, ele3); fn test2(new) ele3 = new; }
+class d: b, c { fn test() print(cls.fries, self.ele3, ele3); fn test2(new) ele3 = new; }
 
 obj = a()
 obj2 = a()
@@ -185,4 +187,43 @@ print(obj3.ele2.cheese, obj3.ele3)
 print(obj4.ele2.cheese, obj4.ele4)
 obj4.test()
 obj4.test2(4)
+d.fries = "chicken"
 obj4.test()
+print(b.fries)
+print(d.fries)
+b.fries_yell()
+d.fries_yell()
+fries(5)
+
+obj4.cls.fries_yell()
+
+obj5 = a(ele=2, ele2="cheese")
+print(obj5.ele, obj5.ele2)
+
+
+lhs = 2
+rhs = 4
+print(lhs or rhs)
+print(lhs and rhs)
+print(lhs and not rhs and not lhs)
+print(lhs or not rhs and not lhs)
+print(lhs and not rhs or not lhs)
+print(lhs or not rhs or not lhs)
+print(lhs and lhs and lhs and lhs)
+print(lhs or lhs or lhs or lhs)
+print(not lhs)
+print(lhs > rhs)
+print(lhs | rhs)
+print(lhs ^ rhs)
+print(lhs & rhs)
+print(lhs << rhs)
+print(lhs + rhs)
+print(lhs / rhs)
+print(-lhs)
+print(lhs ** rhs)
+
+if true
+    print("true")
+
+if not false
+    print("false")

@@ -3,6 +3,14 @@
 import sys
 import ast
 import re
+import copy
+have_readline = False
+try:
+    import readline
+    have_readline = True
+except ImportError:
+    have_readline = False
+from cmd import Cmd
 from lark import Lark, Tree
 from lark.lexer import Lexer, Token
 from lark.exceptions import UnexpectedCharacters, UnexpectedToken, UnexpectedInput, LexError, ParseError, VisitError
@@ -251,10 +259,26 @@ class HognoseASTTransform(Transformer):
     def __default__(self, name, children, meta):
         return Tree(name, self.__remove_newlines(name, children), meta)
 
+    def properties(self, tree):
+        del tree.children[1]
+        more_properties = tree.children[1]
+        del tree.children[1]
+        if more_properties is not None:
+            tree.children.extend(more_properties)
+        return tree
+
+    def more_properties(self, tree):
+        del tree.children[1]
+        more_properties = tree.children[1]
+        del tree.children[1]
+        if more_properties is not None:
+            tree.children.extend(more_properties)
+        return tree
+
     def terminated_expr(self, tree):
         if all([x is None for x in tree.children]):
             return Discard
-        return tree.children[1]
+        return tree.children[0]
 
     def expr_list(self, tree):
         original_child = tree.children[-1]
@@ -492,13 +516,27 @@ class HognoseASTTransform(Transformer):
     def class_parent_ele(self, tree):
         return tree
 
+    def more_disjunction(self, tree):
+        del tree.children[0]
+        del tree.children[1]
+        return tree
+
+    def more_conjunction(self, tree):
+        del tree.children[0]
+        del tree.children[1]
+        return tree
+
+class MissingSymbolError(Exception):
+    pass
+
 class Scope:
     def __init__(self, parent_scope=None,
                        loop_scope=False,
                        function_scope=False,
                        symbols=None,
                        capture_scope=None,
-                       captured_scope=None):
+                       captured_scope=None,
+                       properties=None):
         self.parent_scope = parent_scope
         self.loop_scope = loop_scope
         self.function_scope = function_scope
@@ -517,8 +555,15 @@ class Scope:
                 self.capture_scope = False
         if self.capture_scope:
             for value in self.symbols.values():
-                if hasattr(value, "captured_scope") and value.captured_scope is None:
+                if hasattr(value, "captured_scope"):
                     value.captured_scope = self
+        if properties is None:
+            self.properties = {}
+        else:
+            self.properties = properties
+        for symbol in self.symbols:
+            if symbol not in self.properties:
+                self.properties[symbol] = []
 
     def get(self, symbol, immediate=False):
         if symbol in self.symbols:
@@ -527,9 +572,18 @@ class Scope:
             return self.captured_scope.get(symbol)
         elif immediate is False and self.parent_scope is not None and self.parent_scope.has(symbol):
             return self.parent_scope.get(symbol)
-        raise ValueError("No symbol '{}'".format(symbol))
+        raise MissingSymbolError("No symbol '{}'".format(symbol))
 
-    def assign(self, symbol, value, immediate=False):
+    def get_props(self, symbol, immediate=False):
+        if symbol in self.properties:
+            return self.properties[symbol]
+        elif immediate is False and self.captured_scope is not None and self.captured_scope.has(symbol):
+            return self.captured_scope.get_properties(symbol)
+        elif immediate is False and self.parent_scope is not None and self.parent_scope.has(symbol):
+            return self.parent_scope.get_properties(symbol)
+        raise MissingSymbolError("No symbol '{}'".format(symbol))
+
+    def assign(self, symbol, value, immediate=False, properties=None):
         if symbol in self.symbols or immediate:
             pass
         elif self.captured_scope is not None and self.captured_scope.has(symbol):
@@ -540,6 +594,10 @@ class Scope:
             if value.captured_scope is None:
                 value.captured_scope = self
         self.symbols[symbol] = value
+        if properties is not None:
+            self.properties[symbol] = properties
+        elif symbol not in self.properties:
+            self.properties[symbol] = set()
         return self.symbols[symbol]
 
     def has(self, symbol):
@@ -599,7 +657,68 @@ class Scope:
             loop_scope = self.loop_scope
         if function_scope is None:
             function_scope = self.function_scope
-        return Scope(parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope, symbols=symbols)
+        properties = self.properties # FIXME
+        return Scope(parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope, symbols=symbols, properties=properties)
+
+    def split_by_prop(self, properties, parent_scope=None, loop_scope=None, function_scope=None):
+        return (self.get_by_prop(properties, parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope),
+                self.get_by_prop(properties, parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope, inverse=True))
+
+    def get_by_prop(self, properties, parent_scope=None, loop_scope=None, function_scope=None, inverse=False):
+        if parent_scope is None:
+            parent_scope = self.parent_scope
+        if loop_scope is None:
+            loop_scope = self.loop_scope
+        if function_scope is None:
+            function_scope = self.function_scope
+        if isinstance(properties, list):
+            properties = set(properties)
+        new_symbols = {}
+        new_properties = {}
+        for symbol in self.symbols:
+            props_match = inverse
+            if isinstance(properties, set) and self.properties[symbol] == properties:
+                props_match = not inverse
+            elif isinstance(properties, str) and properties in self.properties[symbol]:
+                props_match = not inverse
+            if props_match:
+                new_symbols[symbol] = self.symbols[symbol]
+                new_properties[symbol] = self.properties[symbol]
+        return Scope(parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope, symbols=new_symbols, properties=new_properties)
+
+    def symbol_names(self):
+        symbol_names = list(self.symbols.keys())
+        if self.captured_scope is not None:
+            symbol_names.extend(self.captured_scope.symbol_names())
+        if self.parent_scope is not None:
+            symbol_names.extend(self.parent_scope.symbol_names())
+        return symbol_names
+
+class LiteralTrue:
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return "LiteralTrue"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return True
+
+class LiteralFalse:
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return "LiteralFalse"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return False
 
 class LiteralString:
     def __init__(self, value):
@@ -926,6 +1045,16 @@ class BinOp:
 
     def eval(self, symbol_table):
         lhs_val = self.lhs.eval(symbol_table)
+        if self.operator == "or" or self.operator == "||":
+            if lhs_val is True:
+                return lhs_val
+            else:
+                return self.rhs.eval(symbol_table)
+        elif self.operator == "and" or self.operator == "&&":
+            if lhs_val is False:
+                return lhs_val
+            else:
+                return self.rhs.eval(symbol_table)
         rhs_val = self.rhs.eval(symbol_table)
         if self.operator == "+":
             return lhs_val + rhs_val
@@ -935,16 +1064,58 @@ class BinOp:
             return lhs_val * rhs_val
         elif self.operator == "/":
             return lhs_val / rhs_val
-        elif self.operator == '>':
+        elif self.operator == "//":
+            return lhs_val // rhs_val
+        elif self.operator == "%":
+            return lhs_val % rhs_val
+        elif self.operator == ">":
             return lhs_val > rhs_val
-        elif self.operator == '>=':
+        elif self.operator == ">=":
             return lhs_val >= rhs_val
-        elif self.operator == '<':
+        elif self.operator == "<":
             return lhs_val < rhs_val
-        elif self.operator == '<=':
+        elif self.operator == "<=":
             return lhs_val <= rhs_val
-        elif self.operator == '==':
+        elif self.operator == "==":
             return lhs_val == rhs_val
+        elif self.operator == "!=":
+            return lhs_val != rhs_val
+        elif self.operator == ">>":
+            return lhs_val >> rhs_val
+        elif self.operator == "<<":
+            return lhs_val << rhs_val
+        elif self.operator == "&":
+            return lhs_val & rhs_val
+        elif self.operator == "^":
+            return lhs_val ^ rhs_val
+        elif self.operator == "|":
+            return lhs_val | rhs_val
+        elif self.operator == "**":
+            return lhs_val ** rhs_val
+        else:
+            raise ValueError("Unhandled operator '{}'".format(self.operator))
+
+class UnOp:
+    def __init__(self, operator, rhs):
+        self.operator = operator
+        self.rhs = rhs
+
+    def __str__(self):
+        return "UnOp: ({} {})".format(self.operator, self.rhs)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        rhs_val = self.rhs.eval(symbol_table)
+        if self.operator == "+":
+            return +rhs_val
+        elif self.operator == "-":
+            return -rhs_val
+        elif self.operator == "~":
+            return ~rhs_val
+        elif self.operator == "not" or self.operator == "!":
+            return not rhs_val
         else:
             raise ValueError("Unhandled operator '{}'".format(self.operator))
 
@@ -987,11 +1158,13 @@ class AssignOp:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
+    def eval(self, symbol_table, properties=None, class_decl=False):
         target = self.target
         # TODO!!!
         if isinstance(target, NameRef):
-            return symbol_table.assign(target.name, self.value.eval(symbol_table))
+            return symbol_table.assign(target.name, self.value.eval(symbol_table), properties=properties, immediate=class_decl)
+        elif class_decl is True:
+            raise Exception("class_decl is true but it doesn't make sense")
         elif isinstance(target, SliceExpr):
             return target.eval(symbol_table, assign=True, assign_val=self.value.eval(symbol_table))
         elif isinstance(target, FieldAccessExpr):
@@ -1052,22 +1225,26 @@ class WhileExpr:
         elif self.else_expr is not None:
             return self.else_expr.eval(symbol_table)
 
+class ArgumentError(Exception):
+    pass
+
 class FnDef:
     def __init__(self, body, pos_args_names=None,
                              args=None,
                              va_args_name=None,
                              va_kw_args_name=None,
-                             type_expr=None):
+                             type_expr=None,
+                             captured_scope=None):
         self.body = body
         self.type_expr = type_expr
         self.pos_args_names = pos_args_names if pos_args_names is not None else []
         self.args = args if args is not None else {}
         self.va_args_name = va_args_name
         self.va_kw_args_name = va_kw_args_name
-        self.captured_scope = None
+        self.captured_scope = captured_scope
 
     def __str__(self):
-        return "FnDef: ({}){}".format(format_or_empty("{}", self.args), self.body)
+        return "FnDef: ({}) {{{}}}".format(format_or_empty("{}", self.args), self.body)
 
     def __repr__(self):
         return self.__str__()
@@ -1079,7 +1256,7 @@ class FnDef:
             kw_args = {}
         new_args = {}
         if len(pos_args) > len(self.pos_args_names) and self.va_args_name is None:
-            raise Exception("Function takes a maximum of {} positional arguments, not {}".format(len(self.pos_args_names), len(pos_args)))
+            raise ArgumentError("Function takes a maximum of {} positional arguments, not {}".format(len(self.pos_args_names), len(pos_args)))
         if self.va_args_name is not None:
             new_args[self.va_args_name] = []
         for pos_arg_num, pos_arg in enumerate(pos_args):
@@ -1094,19 +1271,19 @@ class FnDef:
             arg_val = arg_val.eval(symbol_table)
             if arg_name in self.args:
                 if arg_name in new_args:
-                    raise Exception("Multiple definitions for argument '{}'".format(arg_name))
+                    raise ArgumentError("Multiple definitions for argument '{}'".format(arg_name))
                 elif self.args[arg_name].pos_only is True:
-                    raise Exception("Argument '{}' is positional-only".format(arg_name))
+                    raise ArgumentError("Argument '{}' is positional-only".format(arg_name))
             elif self.va_kw_args_name is not None:
                 new_args[self.va_kw_args_name][arg_name] = arg_val
             else:
-                raise Exception("Unknown arg name '{}'".format(arg_name))
+                raise ArgumentError("Unknown arg name '{}'".format(arg_name))
         for arg_name, arg_val in self.args.items():
             if arg_name not in new_args:
                 if self.args[arg_name].default is not None:
                     new_args[arg_name] = self.args[arg_name].default.eval(symbol_table)
                 else:
-                    raise Exception("Function missing value for argument '{}'".format(arg_name))
+                    raise ArgumentError("Function missing value for argument '{}'".format(arg_name))
         return symbol_table.push_scope(function_scope=True,
                                        symbols=new_args,
                                        captured_scope=self.captured_scope)
@@ -1120,6 +1297,9 @@ class BuiltinFnDef(FnDef):
 
     def eval(self, symbol_table, pos_args=None, kw_args=None):
         return self.body(*[x.eval(symbol_table) for x in pos_args], **{k: v.eval(symbol_table) for k, v in kw_args.items()})
+
+    def __str__(self):
+        return "BuiltinFnDef: {}".format(self.body)
 
 class DeclArg:
     def __init__(self, name, default=None, type_expr=None, pos_only=False, kw_only=False):
@@ -1167,7 +1347,7 @@ class DeclArgList:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
+    def eval(self, symbol_table, class_decl=False):
         pos_args_names = [x.name.name for x in self.args if x.kw_only is False]
         args_dict = {v.name.name: v for v in self.args}
         va_args_name = None
@@ -1187,11 +1367,11 @@ class FnDeclExpr:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
+    def eval(self, symbol_table, properties=None, class_decl=False):
         pos_args_names, args_dict, va_args_name, va_kw_args_name = self.args.eval(symbol_table)
         fndef = FnDef(self.body, pos_args_names=pos_args_names, args=args_dict, va_args_name=va_args_name, va_kw_args_name=va_kw_args_name, type_expr=self.type_expr)
         if self.name:
-            symbol_table.assign(self.name.name, fndef)
+            symbol_table.assign(self.name.name, fndef, properties=properties, immediate=class_decl)
         return fndef
 
 class ForExpr:
@@ -1208,7 +1388,7 @@ class ForExpr:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
+    def eval(self, symbol_table, class_decl=False):
         at_least_once = False
         last_val = None
         induction_var = self.induction_var.expr.name # FIXME
@@ -1230,42 +1410,97 @@ class ForExpr:
         elif self.else_expr is not None:
             return self.else_expr.eval(symbol_table)
 
+class DefaultInit:
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return "DefaultInit:"
+
+    def __repr__(self):
+        return self.__str__()
+
 class ObjDef:
-    def __init__(self, obj_type, members, instance_members=None, parents=None):
+    def __init__(self, obj_type, members=None, instance_members=None, parents=None, obj_class=None, obj_name=None, pos_args=None, kw_args=None, symbol_table=None):
         self.obj_type = obj_type
-        self.members = members
+        self.obj_class = obj_class
+        self.obj_name = obj_name if obj_name is not None else "Anonymous"
+        self.members = members if members is not None else Scope()
         self.instance_members = instance_members if instance_members is not None else Scope()
         self.parents = parents
         self.captured_scope = None
         new_members = {}
+        new_properties = {}
+        new_instance_properties = {}
+        new_instance_members = {}
         if self.parents is not None:
             for parent in self.parents:
+                for symbol_name, obj in parent.members.symbols.items():
+                    new_members[symbol_name] = copy.copy(obj)
+                    new_properties[symbol_name] = parent.members.get_props(symbol_name)
                 for symbol_name, obj in parent.instance_members.symbols.items():
+                    new_instance_members[symbol_name] = obj
+                    new_instance_properties[symbol_name] = parent.instance_members.get_props(symbol_name)
+
+        if self.obj_class is not None:
+            if self.obj_type == "object":
+                for symbol_name, obj in self.obj_class.instance_members.symbols.items():
                     new_members[symbol_name] = obj
-        for symbol_name, obj in self.instance_members.symbols.items():
+                    new_properties[symbol_name] = self.obj_class.instance_members.get_props(symbol_name)
+
+        for symbol_name, obj in self.members.symbols.items():
             new_members[symbol_name] = obj
-        self.instance_members = Scope(symbols=new_members)
+            new_properties[symbol_name] = self.members.get_props(symbol_name)
+        for symbol_name, obj in self.instance_members.symbols.items():
+            new_instance_members[symbol_name] = obj
+            new_instance_properties[symbol_name] = self.instance_members.get_props(symbol_name)
+
+        self.members = Scope(symbols=new_members, properties=new_properties, capture_scope=True, parent_scope=symbol_table)
+        self.instance_members = Scope(symbols=new_instance_members, properties=new_instance_properties, capture_scope=True, parent_scope=symbol_table)
+        if self.obj_class is not None:
+            self.members.assign("cls", self.obj_class, immediate=True)
+        self.members.assign("self", self, immediate=True)
+
+        obj_init = None
+        if self.members.has("init"):
+            obj_init = self.members.get("init")
+
+        if obj_init is None or isinstance(obj_init, DefaultInit):
+            pos_args = pos_args if pos_args is not None else []
+            kw_args = kw_args if kw_args is not None else {}
+            set_members = []
+            pos_members_names = [x for x in self.members.symbols.keys() if x not in ["self", "cls", "init"]]
+            if len(pos_args) > len(pos_members_names):
+                raise ArgumentError("Object only takes {} arguments".format(len(pos_args)))
+            for pos_arg_ele, pos_arg in enumerate(pos_args):
+                pos_arg_name = pos_members_names[pos_arg_ele]
+                self.members.assign(pos_arg_name, pos_arg.eval(symbol_table), immediate=True)
+                set_members.append(pos_arg_name)
+            for arg_name, arg_val in kw_args.items():
+                if arg_name in set_members:
+                    raise ArgumentError("Multiple values for arg '{}'".format(arg_name))
+                self.members.assign(arg_name, arg_val.eval(symbol_table), immediate=True)
+                set_members.append(arg_name)
+            self.members.assign("init", DefaultInit(), immediate=True)
+        else:
+            obj_init.eval(symbol_table, pos_args=pos_args, kw_args=kw_args)
 
     def __str__(self):
-        return "ObjDef: {}{}".format(self.obj_type, self.members)
+        return "ObjDef: {} {} {}".format(self.obj_type, self.obj_name, [str(x) for x in self.parents] if self.parents is not None else "")
 
     def __repr__(self):
         return self.__str__()
 
     def assign_field(self, field_name, assign_val):
-        self.members.assign(field_name, assign_val)
+        self.members.assign(field_name, assign_val, immediate=True)
         return self
 
     def get_field(self, field_name):
         return self.members.get(field_name, immediate=True)
 
-    def eval(self, symbol_table, pos_args=None, kw_args=None):
+    def eval(self, symbol_table, pos_args=None, kw_args=None, class_decl=False):
         if self.obj_type == "class":
-            new_scope = Scope(symbols=self.instance_members.symbols, capture_scope=True)
-            new_obj = ObjDef("object", new_scope)
-            new_obj.members.assign("cls", self, immediate=True)
-            new_obj.members.assign("self", new_obj, immediate=True)
-            return new_obj
+            return ObjDef("object", obj_class=self, symbol_table=symbol_table, pos_args=pos_args, kw_args=kw_args)
         else:
             raise ValueError("Not class")
 
@@ -1285,13 +1520,13 @@ class ClassDecl:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table):
-        class_members = Scope(parent_scope=symbol_table)
-        instance_members = self.body.eval(symbol_table, return_symbol_table=True)
+    def eval(self, symbol_table, properties=None, class_decl=False):
+        members = self.body.eval(symbol_table, class_decl=True)
+        class_members, instance_members = members.split_by_prop("static")
         parents = [x.eval(symbol_table) for x in self.parents]
-        classdef = ObjDef(self.class_type, class_members, instance_members=instance_members, parents=parents)
+        classdef = ObjDef(self.class_type, members=class_members, instance_members=instance_members, parents=parents, obj_name=self.name.name, symbol_table=symbol_table)
         if self.name:
-            symbol_table.assign(self.name.name, classdef)
+            symbol_table.assign(self.name.name, classdef, properties=properties, immediate=class_decl)
         return classdef
 
 class ExprList:
@@ -1304,11 +1539,17 @@ class ExprList:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, return_symbol_table=False):
+    def eval(self, symbol_table, class_decl=False, return_scope=False):
         last_res = None
         symbol_table = symbol_table.push_scope()
+        if class_decl is True:
+            return_scope = True
         for expr in self.exprs:
-            next_res = expr.eval(symbol_table)
+            next_res = None
+            if class_decl is True:
+                next_res = expr.eval(symbol_table, class_decl=class_decl)
+            else:
+                next_res = expr.eval(symbol_table)
             if symbol_table.break_called:
                 if symbol_table.break_val is not None:
                     last_res = symbol_table.break_val
@@ -1316,28 +1557,45 @@ class ExprList:
                     last_res = next_res
                 break
             last_res = next_res
-        if return_symbol_table:
+        if return_scope:
             return symbol_table
         return last_res
 
 class Expr:
-    def __init__(self, expr):
-       self.expr = expr
+    def __init__(self, expr, properties=None):
+        self.expr = expr
+        self.properties = properties
 
     def __str__(self):
-        return str(self.expr)
+        return "{}{}".format(format_or_empty("{} ", self.properties), self.expr)
 
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, return_symbol_table=False):
-        ret_val = self.expr.eval(symbol_table)
+    def eval(self, symbol_table, class_decl=False, return_scope=False):
+        ret_val = None
+        if class_decl is True:
+            return_scope = True
+        if self.properties is not None or class_decl is not False: # FIXME
+            ret_val = self.expr.eval(symbol_table, properties=self.properties, class_decl=class_decl)
+        else:
+            ret_val = self.expr.eval(symbol_table)
         if symbol_table.break_called:
             if symbol_table.break_val is not None:
                 ret_val = symbol_table.break_val
-        if return_symbol_table:
+        if return_scope:
             return symbol_table
         return ret_val
+
+class ConjRhs:
+    def __init__(self, operator, rhs):
+        self.operator = operator
+        self.rhs = rhs
+
+class DisjRhs:
+    def __init__(self, operator, rhs):
+        self.operator = operator
+        self.rhs = rhs
 
 class HognoseASTGen(Interpreter):
     def visit(self, tree, **kwargs):
@@ -1390,10 +1648,19 @@ class HognoseASTGen(Interpreter):
     def string(self, tree):
         return self.visit(tree.children[0])
 
+    def true(self, tree):
+        return LiteralTrue()
+
+    def false(self, tree):
+        return LiteralFalse()
+
     def name(self, tree):
         return NameRef(tree.children[0].value)
 
     def self_ref(self, tree):
+        return NameRef(tree.children[0].value)
+
+    def cls_ref(self, tree):
         return NameRef(tree.children[0].value)
 
     def list(self, tree):
@@ -1488,6 +1755,33 @@ class HognoseASTGen(Interpreter):
     def comp_op(self, tree):
         return self.visit(tree.children[0])
 
+    def lor(self, tree):
+        return tree.children[0].value
+
+    def land(self, tree):
+        return tree.children[0].value
+
+    def lnot(self, tree):
+        return tree.children[0].value
+
+    def bor(self, tree):
+        return tree.children[0].value
+
+    def band(self, tree):
+        return tree.children[0].value
+
+    def bxor(self, tree):
+        return tree.children[0].value
+
+    def shift_op(self, tree):
+        return tree.children[0].value
+
+    def power_op(self, tree):
+        return tree.children[0].value
+
+    def factor_op(self, tree):
+        return tree.children[0].value
+
     def binop(self, tree):
         if len(tree.children) == 1:
             return tree
@@ -1495,6 +1789,13 @@ class HognoseASTGen(Interpreter):
         lhs = self.visit(tree.children[0])
         rhs = self.visit(tree.children[2])
         return BinOp(lhs, operator, rhs)
+
+    def unop(self, tree):
+        if len(tree.children) == 1:
+            return tree
+        operator = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[1])
+        return UnOp(operator, rhs)
 
     def term(self, tree):
         return self.binop(tree)
@@ -1504,6 +1805,73 @@ class HognoseASTGen(Interpreter):
 
     def comparison(self, tree):
         return self.binop(tree)
+
+    def bitwise_or(self, tree):
+        return self.binop(tree)
+
+    def bitwise_xor(self, tree):
+        return self.binop(tree)
+
+    def bitwise_and(self, tree):
+        return self.binop(tree)
+
+    def shift_expr(self, tree):
+        return self.binop(tree)
+
+    def power(self, tree):
+        return self.binop(tree)
+
+    def inversion(self, tree):
+        return self.unop(tree)
+
+    def factor(self, tree):
+        return self.unop(tree)
+
+    def more_disjunction(self, tree):
+        operator = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[1])
+        cont = self.visit_or_none(tree.children[2])
+        if isinstance(cont, DisjRhs):
+            return DisjRhs(operator, BinOp(rhs, cont.operator, cont.rhs))
+        elif cont is None:
+            return DisjRhs(operator, rhs)
+        else:
+            raise Exception("more_disjunction")
+
+    def more_conjunction(self, tree):
+        operator = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[1])
+        cont = self.visit_or_none(tree.children[2])
+        if isinstance(cont, ConjRhs):
+            return ConjRhs(operator, BinOp(rhs, cont.operator, cont.rhs))
+        elif cont is None:
+            return ConjRhs(operator, rhs)
+        else:
+            raise Exception("more_conjunction")
+
+    def disjunction(self, tree):
+        lhs = self.visit(tree.children[0])
+        operator = self.visit(tree.children[1])
+        rhs = self.visit(tree.children[2])
+        res = BinOp(lhs, operator, rhs)
+        cont = self.visit_or_none(tree.children[3])
+        if isinstance(cont, DisjRhs):
+            res = BinOp(res, cont.operator, cont.rhs)
+        elif cont is not None:
+            raise Exception("disjunction")
+        return res
+
+    def conjunction(self, tree):
+        lhs = self.visit(tree.children[0])
+        operator = self.visit(tree.children[1])
+        rhs = self.visit(tree.children[2])
+        res = BinOp(lhs, operator, rhs)
+        cont = self.visit_or_none(tree.children[3])
+        if isinstance(cont, ConjRhs):
+            res = BinOp(res, cont.operator, cont.rhs)
+        elif cont is not None:
+            raise Exception("conjunction")
+        return res
 
     def if_expr(self, tree):
         guard = self.visit(tree.children[1])
@@ -1598,6 +1966,12 @@ class HognoseASTGen(Interpreter):
             return expr_to_eval.value
         return expr_to_eval
 
+    def properties(self, tree):
+        return set([x.value for x in tree.children])
+
+    def expr_with_prop(self, tree):
+        return Expr(self.visit(tree.children[1]).expr, properties=self.visit_or_none(tree.children[0]))
+
     def block(self, tree):
         return self.visit(tree.children[1]) if tree.children[1] is not None else ExprList([])
 
@@ -1607,30 +1981,105 @@ class HognoseASTGen(Interpreter):
     def start(self, tree):
         return self.visit(tree.children[0])
 
-grammar_text = None
+class HognoseInterpreter:
+    def __init__(self):
+        grammar_text = None
+        with open("grammar.lark") as f:
+            grammar_text = f.read()
+        self.parser = Lark(grammar_text, propagate_positions=True, ambiguity="explicit", lexer=HognoseLexer)
+        self.scope = Scope(symbols={
+            "print": BuiltinFnDef(print)
+        })
 
-with open("grammar.lark") as f:
-    grammar_text = f.read()
+    def parse(self, text, print_tree=False):
+        raw_parse_res = self.parser.parse(text)
+        try:
+            parse_res = HognosePostParse().transform(raw_parse_res)
+        except (VisitError, ParseError) as e:
+            if print_tree:
+                tree_print(raw_parse_res)
+            raise e from None
+        if print_tree:
+            tree_print(parse_res)
+        pre_ast = HognoseASTTransform(self.parser.rules).transform(parse_res)
+        if print_tree:
+            tree_print(pre_ast)
+        tree_ast = HognoseASTGen().visit(pre_ast)
+        if print_tree:
+            tree_print(tree_ast)
+        self.scope = tree_ast.eval(self.scope, return_scope=True)
 
-parser = Lark(grammar_text, propagate_positions=True, ambiguity="explicit", lexer=HognoseLexer)
+    def parse_from_file(self, file_path, print_input=False, print_tree=False):
+        input_text = None
+        with open(file_path) as f:
+            input_text = f.read()
+        if print_input:
+            for line_no, line in enumerate(input_text.splitlines()):
+                print("{}: {}".format(line_no + 1, line))
+        self.parse(input_text, print_tree=print_tree)
 
-input_text = None
+class HognoseRepl(Cmd):
+    def __init__(self):
+        super().__init__()
+        self.__interp = HognoseInterpreter()
+        self.intro = "\n".join([
+        "Welcome to Hognose. This language is very under development.",
+        "Type 'quit' or 'exit' to exit."
+        ])
+        self.__normal_prompt = "~~> "
+        self.__oops_prompt = "~!> "
+        self.prompt = self.__normal_prompt
 
-with open(sys.argv[1]) as f:
-    input_text = f.read()
+    def default(self, line):
+        try:
+            self.__interp.parse(line + ";")
+            self.prompt = self.__normal_prompt
+        except (VisitError, ArgumentError, MissingSymbolError) as e:
+            self.prompt = self.__oops_prompt
+            print(e)
 
-for line_no, line in enumerate(input_text.splitlines()):
-    print("{}: {}".format(line_no + 1, line))
-raw_parse_res = parser.parse(input_text)
-try:
-    parse_res = HognosePostParse().transform(raw_parse_res)
-except (VisitError, ParseError) as e:
-    tree_print(raw_parse_res)
-    raise e from None
-tree_print(parse_res)
+    def completenames(self, text, *args):
+        ret_names = []
+        if text in "exit":
+            ret_names.append("exit")
+        if text in "quit":
+            ret_names.append("quit")
+        if text in "help":
+            ret_names.append("help")
+        for symbol_name in self.__interp.scope.symbol_names():
+            if text in symbol_name:
+                ret_names.append(symbol_name)
+        return ret_names
 
-pre_ast = HognoseASTTransform(parser.rules).transform(parse_res)
-tree_print(pre_ast)
-tree_ast = HognoseASTGen().visit(pre_ast)
-tree_print(tree_ast)
-tree_ast.eval(Scope(symbols={"print": BuiltinFnDef(print)}))
+    def do_help(self, arg):
+        if len(arg) == 0:
+            self.stdout.write("help <cmd>: choose from '{}'\n".format(["exit", "quit", *self.__interp.scope.symbol_names()]))
+            return
+        if arg in ["exit", "help"]:
+            self.stdout.write("Exit the REPL\n")
+            return
+        elif arg in ["help"]:
+            self.stdout.write("This\n")
+            return
+        elif arg in self.__interp.scope.symbol_names():
+            self.stdout.write("Hognose object: '{}'\n".format(self.__interp.scope.get(arg)))
+            return
+        self.stdout.write("Unknown symbol '{}'\n".format(arg))
+
+    def emptyline(self):
+        self.prompt = self.__normal_prompt
+        pass
+
+    def do_exit(self, line):
+        return True
+
+    def do_quit(self, line):
+        return True
+
+if len(sys.argv) > 1:
+    HognoseInterpreter().parse_from_file(sys.argv[1], True, True)
+else:
+    try:
+        HognoseRepl().cmdloop()
+    except KeyboardInterrupt:
+        print("")

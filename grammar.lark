@@ -3,8 +3,9 @@
 ?expr_list: terminated_or_empty_expr [expr_list]
 ?terminated_or_empty_expr: terminated_expr
                          | empty_expr
-?terminated_expr: [properties] expr terminator
+?terminated_expr: expr_with_prop terminator
 empty_expr: terminator
+expr_with_prop: [properties] expr
 ?properties: property [newlines] [more_properties]
 ?more_properties: property [newlines] [more_properties]
 ?property: STATIC
@@ -134,13 +135,13 @@ range_end: [closed_end_op] range_end_inner
 closed_end_op: LT [newlines]
 range_end_inner: disjunction
                | GT
-?disjunction: conjunction [newlines] more_disjunction
+?disjunction: conjunction [newlines] lor [newlines] conjunction [more_disjunction]
             | conjunction
-?more_disjunction: [newlines] or [newlines] conjunction [more_disjunction]
-?conjunction: inversion [newlines] more_conjunction
+?more_disjunction: [newlines] lor [newlines] conjunction [more_disjunction]
+?conjunction: inversion [newlines] land [newlines] inversion [more_conjunction]
             | inversion
-?more_conjunction: [newlines] and [more_conjunction]
-?inversion: not [newlines] inversion
+?more_conjunction: [newlines] land [newlines] inversion [more_conjunction]
+?inversion: lnot [newlines] inversion
           | comparison
 ?comparison: bitwise_or [newlines] comp_op [newlines] comparison
            | bitwise_or
@@ -168,7 +169,7 @@ primary: primary [newlines] access
 ?access: field_access
        | call_args
        | slice
-?field_access: DOT [newlines] name
+?field_access: DOT [newlines] name_like
 
 ?call_args: OPEN_PAREN [newlines] [call_args_body] CLOSE_PAREN
 ?call_args_body: call_args_ele [more_call_args] [newlines]
@@ -180,13 +181,10 @@ pos_arg: starred_expr
 
 ?slice: OPEN_SQUARE [newlines] group [newlines] CLOSE_SQUARE
 
-?atom: name
+?atom: name_like
      | true
      | false
      | null
-     | self_ref
-     | cls_ref
-     | super
      | string
      | number
      | parens
@@ -245,9 +243,9 @@ shift_op: LSHIFT | RSHIFT
 band: AMP
 bxor: CARAT
 bor: BAR
-and: AND | DOUBLE_AMP
-or: OR | DOUBLE_BAR
-not: NOT | BANG
+land: AND | DOUBLE_AMP
+lor: OR | DOUBLE_BAR
+lnot: NOT | BANG
 assign_op: EQUAL
 dot_op: DOT
 array_op: OPEN_SQUARE CLOSE_SQUARE
@@ -259,20 +257,25 @@ op: comp_op
   | shift_op
   | band
   | bor
-  | and
-  | or
-  | not
+  | land
+  | lor
+  | lnot
   | assign_op
   | array_op
   | dot_op
 ?newlines: NEWLINE [more_newline]
 ?more_newline: NEWLINE [more_newline]
 
+
+?name_like: name
+          | self_ref
+          | cls_ref
+          | super_ref
 true: TRUE
 false: FALSE
 null: NULL
 name: NAME
-super: SUPER
+super_ref: SUPER
 cls_ref: CLS
 self_ref: SELF
 
