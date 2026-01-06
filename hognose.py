@@ -2016,6 +2016,13 @@ class HognoseInterpreter:
         if print_input:
             for line_no, line in enumerate(input_text.splitlines()):
                 print("{}: {}".format(line_no + 1, line))
+        if "env" not in self.scope.symbols:
+            self.scope.assign("env", ObjDef("namespace",
+                members=Scope(symbols={
+                    "args": sys.argv
+                }),
+                obj_name="env")
+            )
         self.parse(input_text, print_tree=print_tree)
 
 class HognoseRepl(Cmd):

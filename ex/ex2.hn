@@ -227,3 +227,5 @@ if true
 
 if not false
     print("false")
+
+print(env.args)
