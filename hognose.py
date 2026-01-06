@@ -225,6 +225,12 @@ class HognosePostParse(Transformer_InPlace):
             return tighter_bound_group[0]
         raise ParseError("Don't know how to deal with this ambiguity yet: {}".format(tree))
 
+    def _ambig_expr_list(self, tree):
+        tighter_bound_group = [x for x in tree if x.children[1] is None]
+        if len(tighter_bound_group) == 1:
+            return tighter_bound_group[0]
+        raise ParseError("Don't know how to deal with this ambiguity yet: {}".format(tree))
+
     def _ambig(self, tree):
         if isinstance(tree, list) and len(tree) == 1:
             return tree[0]
@@ -1988,7 +1994,10 @@ class HognoseInterpreter:
             grammar_text = f.read()
         self.parser = Lark(grammar_text, propagate_positions=True, ambiguity="explicit", lexer=HognoseLexer)
         self.scope = Scope(symbols={
-            "print": BuiltinFnDef(print)
+            "print": BuiltinFnDef(print),
+            "int": BuiltinFnDef(int),
+            "float": BuiltinFnDef(float),
+            "len": BuiltinFnDef(len)
         })
 
     def parse(self, text, print_tree=False):
