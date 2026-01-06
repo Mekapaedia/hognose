@@ -184,8 +184,8 @@ pos_arg: starred_expr
      | true
      | false
      | null
-     | self
-     | cls
+     | self_ref
+     | cls_ref
      | super
      | string
      | number
@@ -273,8 +273,8 @@ false: FALSE
 null: NULL
 name: NAME
 super: SUPER
-cls: CLS
-self: SELF
+cls_ref: CLS
+self_ref: SELF
 
 ?terminator: NEWLINE
            | SEMI_COLON

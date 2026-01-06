@@ -167,7 +167,7 @@ class c
     ele4 = 3
 }
 
-class d: a, c { fn test() print("waaaa"); }
+class d: b, c { fn test() print("waaa", self.ele3, ele3); fn test2(new) ele3 = new; }
 
 obj = a()
 obj2 = a()
@@ -175,7 +175,6 @@ print(obj.ele)
 obj.ele = 2
 print(obj.ele)
 print(obj2.ele)
-print(a.ele)
 print(obj.ele2.cheese)
 obj.ele2.cheese = "fries"
 print(obj.ele2.cheese)
@@ -184,4 +183,6 @@ obj3 = b()
 obj4 = d()
 print(obj3.ele2.cheese, obj3.ele3)
 print(obj4.ele2.cheese, obj4.ele4)
+obj4.test()
+obj4.test2(4)
 obj4.test()

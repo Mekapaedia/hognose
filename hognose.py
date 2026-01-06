@@ -493,7 +493,12 @@ class HognoseASTTransform(Transformer):
         return tree
 
 class Scope:
-    def __init__(self, parent_scope=None, loop_scope=False, function_scope=False, symbols=None):
+    def __init__(self, parent_scope=None,
+                       loop_scope=False,
+                       function_scope=False,
+                       symbols=None,
+                       capture_scope=None,
+                       captured_scope=None):
         self.parent_scope = parent_scope
         self.loop_scope = loop_scope
         self.function_scope = function_scope
@@ -501,25 +506,50 @@ class Scope:
         self.break_called = False
         self.break_val = None
         self.defer_exprs = []
+        self.capture_scope = capture_scope
+        self.captured_scope = captured_scope
+        if self.capture_scope is None:
+            if self.captured_scope is not None:
+                self.capture_scope = True
+            elif self.parent_scope is not None:
+                self.capture_scope = self.parent_scope.capture_scope
+            else:
+                self.capture_scope = False
+        if self.capture_scope:
+            for value in self.symbols.values():
+                if hasattr(value, "captured_scope") and value.captured_scope is None:
+                    value.captured_scope = self
 
     def get(self, symbol, immediate=False):
         if symbol in self.symbols:
             return self.symbols[symbol]
-        elif self.parent_scope is None or immediate is True:
-            raise ValueError("No symbol '{}'".format(symbol))
-        return self.parent_scope.get(symbol)
+        elif immediate is False and self.captured_scope is not None and self.captured_scope.has(symbol):
+            return self.captured_scope.get(symbol)
+        elif immediate is False and self.parent_scope is not None and self.parent_scope.has(symbol):
+            return self.parent_scope.get(symbol)
+        raise ValueError("No symbol '{}'".format(symbol))
 
     def assign(self, symbol, value, immediate=False):
         if symbol in self.symbols or immediate:
-            self.symbols[symbol] = value
+            pass
+        elif self.captured_scope is not None and self.captured_scope.has(symbol):
+            return self.captured_scope.assign(symbol, value)
         elif self.parent_scope is not None and self.parent_scope.has(symbol):
             return self.parent_scope.assign(symbol, value)
-        else:
-            self.symbols[symbol] = value
+        if self.capture_scope and hasattr(value, "captured_scope"):
+            if value.captured_scope is None:
+                value.captured_scope = self
+        self.symbols[symbol] = value
         return self.symbols[symbol]
 
     def has(self, symbol):
-        return symbol in self.symbols or self.parent_scope.has(symbol) if self.parent_scope is not None else False
+        if symbol in self.symbols:
+            return True
+        elif self.captured_scope is not None and self.captured_scope.has(symbol):
+            return True
+        elif self.parent_scope is not None and self.parent_scope.has(symbol):
+            return True
+        return False
 
     def call_break(self, loop_break=False, function_break=False, loop_continue=False, break_val=None):
         self.break_val = break_val
@@ -543,8 +573,15 @@ class Scope:
             last_res = defer_expr.eval(self)
         return last_res
 
-    def push_scope(self, loop_scope=False, function_scope=False, symbols=None):
-        return Scope(parent_scope=self, loop_scope=loop_scope, function_scope=function_scope, symbols=symbols)
+    def push_scope(self, loop_scope=False,
+                         function_scope=False,
+                         symbols=None,
+                         captured_scope=None):
+        return Scope(parent_scope=self,
+                     loop_scope=loop_scope,
+                     function_scope=function_scope,
+                     symbols=symbols,
+                     captured_scope=captured_scope)
 
     def pop_scope(self):
         if self.parent_scope is None:
@@ -1016,13 +1053,18 @@ class WhileExpr:
             return self.else_expr.eval(symbol_table)
 
 class FnDef:
-    def __init__(self, body, pos_args_names=None, args=None, va_args_name=None, va_kw_args_name=None, type_expr=None):
+    def __init__(self, body, pos_args_names=None,
+                             args=None,
+                             va_args_name=None,
+                             va_kw_args_name=None,
+                             type_expr=None):
         self.body = body
         self.type_expr = type_expr
         self.pos_args_names = pos_args_names if pos_args_names is not None else []
         self.args = args if args is not None else {}
         self.va_args_name = va_args_name
         self.va_kw_args_name = va_kw_args_name
+        self.captured_scope = None
 
     def __str__(self):
         return "FnDef: ({}){}".format(format_or_empty("{}", self.args), self.body)
@@ -1065,7 +1107,9 @@ class FnDef:
                     new_args[arg_name] = self.args[arg_name].default.eval(symbol_table)
                 else:
                     raise Exception("Function missing value for argument '{}'".format(arg_name))
-        return symbol_table.push_scope(function_scope=True, symbols=new_args)
+        return symbol_table.push_scope(function_scope=True,
+                                       symbols=new_args,
+                                       captured_scope=self.captured_scope)
 
     def eval(self, symbol_table, pos_args=None, kw_args=None):
         return self.body.eval(self.eval_args(symbol_table, pos_args, kw_args))
@@ -1187,10 +1231,20 @@ class ForExpr:
             return self.else_expr.eval(symbol_table)
 
 class ObjDef:
-    def __init__(self, obj_type, members, parents=None):
+    def __init__(self, obj_type, members, instance_members=None, parents=None):
         self.obj_type = obj_type
         self.members = members
+        self.instance_members = instance_members if instance_members is not None else Scope()
         self.parents = parents
+        self.captured_scope = None
+        new_members = {}
+        if self.parents is not None:
+            for parent in self.parents:
+                for symbol_name, obj in parent.instance_members.symbols.items():
+                    new_members[symbol_name] = obj
+        for symbol_name, obj in self.instance_members.symbols.items():
+            new_members[symbol_name] = obj
+        self.instance_members = Scope(symbols=new_members)
 
     def __str__(self):
         return "ObjDef: {}{}".format(self.obj_type, self.members)
@@ -1207,13 +1261,11 @@ class ObjDef:
 
     def eval(self, symbol_table, pos_args=None, kw_args=None):
         if self.obj_type == "class":
-            new_members = {}
-            if self.parents is not None:
-                for parent in self.parents:
-                    for symbol_name, obj in parent.members.symbols.items():
-                        new_members[symbol_name] = obj
-            new_members = {**new_members, **self.members.symbols}
-            return ObjDef("object", Scope(parent_scope=symbol_table, symbols=new_members))
+            new_scope = Scope(symbols=self.instance_members.symbols, capture_scope=True)
+            new_obj = ObjDef("object", new_scope)
+            new_obj.members.assign("cls", self, immediate=True)
+            new_obj.members.assign("self", new_obj, immediate=True)
+            return new_obj
         else:
             raise ValueError("Not class")
 
@@ -1234,9 +1286,10 @@ class ClassDecl:
         return self.__str__()
 
     def eval(self, symbol_table):
-        class_members = self.body.eval(symbol_table, return_symbol_table=True)
+        class_members = Scope(parent_scope=symbol_table)
+        instance_members = self.body.eval(symbol_table, return_symbol_table=True)
         parents = [x.eval(symbol_table) for x in self.parents]
-        classdef = ObjDef(self.class_type, class_members, parents=parents)
+        classdef = ObjDef(self.class_type, class_members, instance_members=instance_members, parents=parents)
         if self.name:
             symbol_table.assign(self.name.name, classdef)
         return classdef
@@ -1338,6 +1391,9 @@ class HognoseASTGen(Interpreter):
         return self.visit(tree.children[0])
 
     def name(self, tree):
+        return NameRef(tree.children[0].value)
+
+    def self_ref(self, tree):
         return NameRef(tree.children[0].value)
 
     def list(self, tree):
@@ -1507,7 +1563,6 @@ class HognoseASTGen(Interpreter):
         return [self.visit(child) for child in tree.children]
 
     def classdecl(self, tree):
-        rich.print(tree)
         class_type = tree.children[0].value
         name = self.visit_or_none(tree.children[1])
         parents = self.visit_or_none(tree.children[2])
