@@ -401,11 +401,11 @@ class Scope:
                 new_properties[symbol] = self.properties[symbol]
         return Scope(parent_scope=parent_scope, loop_scope=loop_scope, function_scope=function_scope, symbols=new_symbols, properties=new_properties)
 
-    def symbol_names(self):
+    def symbol_names(self, immediate=False):
         symbol_names = list(self.symbols.keys())
         if self.captured_scope is not None:
             symbol_names.extend(self.captured_scope.symbol_names())
-        if self.parent_scope is not None:
+        if self.parent_scope is not None and immediate is False:
             symbol_names.extend(self.parent_scope.symbol_names())
         return symbol_names
 
@@ -1241,7 +1241,9 @@ class ObjDef:
             obj_init.eval(symbol_table, pos_args=pos_args, kw_args=kw_args)
 
     def __str__(self):
-        return "ObjDef: {} {} {}".format(self.obj_type, self.obj_name, [str(x) for x in self.parents] if self.parents is not None else "")
+        return "ObjDef: {} {} {} {{{}}}".format(self.obj_type, self.obj_name, [str(x) for x in self.parents] if self.parents is not None else "",
+                        ", ".join(["{}".format(name) for name, _ in self.members.symbols.items()])
+                )
 
     def __repr__(self):
         return self.__str__()
@@ -2204,31 +2206,66 @@ class HognoseRepl(Cmd):
             print(e)
 
     def completenames(self, text, *args):
+        path = None
+        if "." in text:
+            path = text.split(".")
         ret_names = []
-        if text in "exit":
-            ret_names.append("exit")
-        if text in "quit":
-            ret_names.append("quit")
-        if text in "help":
-            ret_names.append("help")
-        for symbol_name in self.__interp.scope.symbol_names():
-            if text in symbol_name:
-                ret_names.append(symbol_name)
+        symbol_names = self.__interp.scope.symbol_names()
+        if path is None:
+            if text in "exit":
+                ret_names.append("exit")
+            if text in "quit":
+                ret_names.append("quit")
+            if text in "help":
+                ret_names.append("help")
+            for symbol in symbol_names:
+                if symbol.startswith(text):
+                    ret_names.append(symbol)
+        if path[0] in symbol_names:
+            root_symbol = self.__interp.scope.get(path[0])
+            ret_names = []
+            ret_path = [path[0]]
+            members = root_symbol.members.symbol_names(immediate=True) if hasattr(root_symbol, "members") else []
+            for path_ele in path[1:-1]:
+                if path_ele in members:
+                    root_symbol = root_symbol.members.get(path_ele)
+                    members = root_symbol.members.symbol_names(immediate=True) if hasattr(root_symbol, "members") else []
+                else:
+                    members = []
+                    break
+            for symbol in members:
+                if symbol.startswith(path[-1]):
+                    ret_names.append(".".join([*ret_path, symbol]))
         return ret_names
 
     def do_help(self, arg):
+        path = None
+        if "." in arg:
+            path = arg.split(".")
+        else:
+            path = [arg]
         if len(arg) == 0:
             self.stdout.write("help <cmd>: choose from '{}'\n".format(["exit", "quit", *self.__interp.scope.symbol_names()]))
             return
         if arg in ["exit", "quit"]:
-            self.stdout.write("Exit the REPL\n")
+            self.stdout.write("{}: Exit the REPL\n".format(arg))
             return
         elif arg in ["help"]:
-            self.stdout.write("This\n")
+            self.stdout.write("{}: This\n".format(arg))
             return
-        elif arg in self.__interp.scope.symbol_names():
-            self.stdout.write("Hognose object: '{}'\n".format(self.__interp.scope.get(arg)))
-            return
+        elif path[0] in self.__interp.scope.symbol_names():
+            symbol = self.__interp.scope.get(path[0])
+            members = symbol.members.symbol_names(immediate=True) if hasattr(symbol, "members") else []
+            for path_ele in path[1:]:
+                if path_ele in members:
+                    symbol = symbol.members.get(path_ele)
+                    members = symbol.members.symbol_names(immediate=True) if hasattr(symbol, "members") else []
+                else:
+                    symbol = None
+                    break
+            if symbol is not None:
+                self.stdout.write("{}: Hognose object: '{}'\n".format(arg, symbol))
+                return
         self.stdout.write("Unknown symbol '{}'\n".format(arg))
 
     def emptyline(self):
