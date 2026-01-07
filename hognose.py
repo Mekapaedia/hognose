@@ -2220,7 +2220,7 @@ class HognoseRepl(Cmd):
         if len(arg) == 0:
             self.stdout.write("help <cmd>: choose from '{}'\n".format(["exit", "quit", *self.__interp.scope.symbol_names()]))
             return
-        if arg in ["exit", "help"]:
+        if arg in ["exit", "quit"]:
             self.stdout.write("Exit the REPL\n")
             return
         elif arg in ["help"]:
