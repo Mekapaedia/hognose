@@ -726,6 +726,19 @@ class LiteralFalse:
     def eval(self, symbol_table):
         return False
 
+class LiteralNull:
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        return "LiteralNull"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        return None
+
 class LiteralString:
     def __init__(self, value):
         self.value = str(value)
@@ -954,7 +967,12 @@ class FieldAccessExpr:
         target = self.target.eval(symbol_table)
         field_name = self.field.eval(symbol_table)
         if assign:
-            target = target.assign_field(field_name, assign_val)
+            if isinstance(target, (list, dict, str)): # FIXME
+                setattr(target, field_name, assign_val)
+            else:
+                target = target.assign_field(field_name, assign_val)
+        if isinstance(target, (list, dict, str)): # FIXME
+            return getattr(target, field_name)
         return target.get_field(field_name)
 
 class FieldAccess:
@@ -1035,7 +1053,10 @@ class FuncCall:
         return self.__str__()
 
     def eval(self, symbol_table):
-        return self.callee.eval(symbol_table).eval(symbol_table, self.args.pos_args, self.args.kw_args)
+        callee = self.callee.eval(symbol_table)
+        if type(callee).__name__ == "builtin_function_or_method": # FIXME
+            callee = BuiltinFnDef(callee)
+        return callee.eval(symbol_table, self.args.pos_args, self.args.kw_args)
 
 class BinOp:
     def __init__(self, lhs, operator, rhs):
@@ -1397,7 +1418,10 @@ class ForExpr:
     def eval(self, symbol_table, class_decl=False):
         at_least_once = False
         last_val = None
-        induction_var = self.induction_var.expr.name # FIXME
+        induction_var = self.induction_var
+        if hasattr(induction_var, "expr"):
+            induction_var = induction_var.expr
+        induction_var = induction_var.name # FIXME
         symbol_table = symbol_table.push_scope(loop_scope=True)
         induction_list = self.induction_expr.eval(symbol_table)
         if isinstance(induction_list, Range): # FIXME
@@ -1659,6 +1683,9 @@ class HognoseASTGen(Interpreter):
 
     def false(self, tree):
         return LiteralFalse()
+
+    def null(self, tree):
+        return LiteralNull()
 
     def name(self, tree):
         return NameRef(tree.children[0].value)

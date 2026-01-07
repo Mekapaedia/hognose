@@ -109,7 +109,7 @@ control_exprs: if_expr
 ?if_expr: IF expr cond_body
 ?elif_expr: ELIF expr cond_body
 
-?for_in: group IN starred_expr
+?for_in: group IN group
 ?for_expr: FOR for_in cond_body
 ?elfor_expr: ELFOR for_in cond_body
 

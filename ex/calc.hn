@@ -1,0 +1,72 @@
+num_stack = []
+op_stack = []
+accum = null
+
+if (len(env.args) <= 2)
+{
+    print(env.args[0], env.args[1], "Calculator example. Usage: [CMD] NUM [+-*/] NUM [[+-*/] NUM ...]")
+    return
+}
+elif (len(env.args) == 3)
+{
+    print(int(env.args[2]))
+    return
+}
+
+for arg in (env.args[2..<len(env.args)]) # FIXME: bind slicing tighter than literal lists
+{
+    if (arg == "+" or arg == "-" or arg == "/" or arg == "*")
+    {
+        op_stack.append(arg)
+    }
+    else
+    {
+        arg = int(arg)
+        num_stack.append(arg)
+        if len(op_stack) > 1
+        {
+            if (op_stack[-1] == "/") # FIXME binding again
+            {
+                op_stack.pop(-1)
+                lhs = num_stack.pop(-1)
+                rhs = num_stack.pop(-1)
+                num_stack.insert(0, lhs / rhs)
+            }
+            elif (op_stack[-1] == "*")
+            {
+                op_stack.pop(-1)
+                lhs = num_stack.pop(-1)
+                rhs = num_stack.pop(-1)
+                num_stack.insert(0, lhs * rhs)
+            }
+            elif (op_stack[-1] == "+")
+            {
+                op_stack.pop(-1)
+                lhs = num_stack.pop(-1)
+                rhs = num_stack.pop(-1)
+                num_stack.insert(0, lhs + rhs)
+            }
+            elif (op_stack[-1] == "-")
+            {
+                op_stack.pop(-1)
+                lhs = num_stack.pop(-1)
+                rhs = num_stack.pop(-1)
+                num_stack.insert(0, lhs - rhs)
+            }
+        }
+    }
+}
+final_op = op_stack.pop(-1)
+rhs = num_stack.pop(-1)
+lhs = num_stack.pop(-1)
+final_val = null
+if (final_op == "/") # FIXME also binding issues here
+    final_val = lhs / rhs
+elif (final_op == "*")
+    final_val = lhs * rhs
+elif (final_op == "+")
+    final_val = lhs + rhs
+elif (final_op == "-")
+    final_val = lhs - rhs
+
+print(final_val)
