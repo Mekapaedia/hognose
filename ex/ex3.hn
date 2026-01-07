@@ -1,6 +1,0 @@
-class: cheese,fries,chick=2
-{
-    cheese
-}
-
-fib = fn recurse(a) return if a > 1 recurse(a-1) + recurse(a-2) else a (2)

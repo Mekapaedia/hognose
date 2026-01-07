@@ -139,7 +139,7 @@ class HognoseLexer(Lexer):
     }
 
     def __init__(self, lexer_conf):
-        self.ignore = lexer_conf.ignore
+        self.ignore = list(lexer_conf.ignore)
         self.patterns = {}
         specials_needed = list(self.special.keys())
         for terminal in lexer_conf.terminals:
@@ -209,31 +209,29 @@ class HognoseLexer(Lexer):
         while len(tokens):
             yield tokens.pop(0)
 
-class HognosePostParse(Transformer_InPlace):
+@v_args(tree=True)
+class HognoseParseTreeGen(Transformer):
+    def newlines(self, tree):
+        return Discard
 
-    def _ambig_cond_body(self, tree):
-        tighter_bound_group = [x for x in tree if x.children[2] is None]
-        less_bound_group = [x for x in tree if x.children[2] is not None]
-        if len(tighter_bound_group) == 1:
-            return tighter_bound_group[0]
-        raise ParseError("Don't know how to deal with this ambiguity yet: {}".format(tree))
+    def empty_expr(self, tree):
+        return Discard
 
-    def _ambig_expr(self, tree):
-        tighter_bound_group = [x for x in tree if x.children[1] is None]
-        less_bound_group = [x for x in tree if x.children[1] is not None]
-        if len(tighter_bound_group) == 1:
-            return tighter_bound_group[0]
-        raise ParseError("Don't know how to deal with this ambiguity yet: {}".format(tree))
-
-    def _ambig_expr_list(self, tree):
-        tighter_bound_group = [x for x in tree if x.children[1] is None]
-        if len(tighter_bound_group) == 1:
-            return tighter_bound_group[0]
-        raise ParseError("Don't know how to deal with this ambiguity yet: {}".format(tree))
+    def expr_list(self, tree):
+        if len(tree.children) == 0:
+            return Discard
+        elif len(tree.children) == 1:
+            if tree.children[0] is None:
+                return Discard
+            elif tree.children[0].data == tree.data:
+                return tree.children[0]
+        return tree
 
     def _ambig(self, tree):
         if isinstance(tree, list) and len(tree) == 1:
             return tree[0]
+        elif isinstance(tree, Tree):
+            return tree
         ambig_names = set([x.data.value for x in tree])
         if len(ambig_names) > 1:
             raise ParseError("Cannot resolve ambiguity for more than one rule type: {}".format(list(ambig_names)))
@@ -242,295 +240,6 @@ class HognosePostParse(Transformer_InPlace):
         if not hasattr(self, ambig_handler):
             raise ParseError("No ambiguity handler registered for {}\n\n{}".format(ambig_name, "\n\n".join([x.pretty() for x in tree])))
         return getattr(self, ambig_handler)(tree)
-
-@v_args(tree=True)
-class HognoseASTTransform(Transformer):
-
-    def __init__(self, parser_rules, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.newline_removes = {}
-        for rule in parser_rules:
-            rule_name = rule.origin.name.value
-            rule_productions = [x.name for x in rule.expansion]
-            rule_newlines = [i for i in range(0, len(rule_productions)) if rule_productions[i] == 'newlines']
-            if rule_name not in self.newline_removes:
-                self.newline_removes[rule_name] = {}
-            self.newline_removes[rule_name][len(rule_productions)] = rule_newlines
-
-    def __remove_newlines(self, name, tree):
-        for del_index in sorted(self.newline_removes[name][len(tree)], reverse=True):
-            del tree[del_index]
-        return tree
-
-    def __default__(self, name, children, meta):
-        return Tree(name, self.__remove_newlines(name, children), meta)
-
-    def properties(self, tree):
-        del tree.children[1]
-        more_properties = tree.children[1]
-        del tree.children[1]
-        if more_properties is not None:
-            tree.children.extend(more_properties)
-        return tree
-
-    def more_properties(self, tree):
-        del tree.children[1]
-        more_properties = tree.children[1]
-        del tree.children[1]
-        if more_properties is not None:
-            tree.children.extend(more_properties)
-        return tree
-
-    def terminated_expr(self, tree):
-        if all([x is None for x in tree.children]):
-            return Discard
-        return tree.children[0]
-
-    def expr_list(self, tree):
-        original_child = tree.children[-1]
-        del tree.children[-1]
-        if original_child is not None:
-            tree.children.extend(original_child.children)
-        tree.children = [x for x in tree.children if x is not None]
-        return tree
-
-    def more_call_args(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        original_child = tree.children[-1]
-        del tree.children[-1]
-        if original_child is not None:
-            tree.children.extend(original_child.children)
-        tree.children = [x for x in tree.children if x is not None]
-        return tree
-
-    def call_args_body(self, tree):
-        del tree.children[-1]
-        original_child = tree.children[-1]
-        del tree.children[-1]
-        if original_child is not None:
-            tree.children.extend(original_child.children)
-        tree.children = [x for x in tree.children if x is not None]
-        return tree
-
-    def call_args(self, tree):
-        tree.children = [x for x in tree.children if x is not None]
-        del tree.children[0]
-        del tree.children[-1]
-        ret_tree = tree
-        if len(tree.children) > 0:
-            ret_tree = tree.children[0]
-        ret_tree.data = "call_args"
-        return ret_tree
-
-    def empty_expr(self, tree):
-        return Discard
-
-    def newlines(self, tree):
-        return Discard
-
-    def elexpr(self, tree):
-        control_expr = tree.children[0]
-        cond_body = control_expr.children[2]
-        del control_expr.children[2]
-        elexpr = cond_body.children[1]
-        if elexpr is not None:
-            cond_body.children[1] = cond_body.children[1].children[0]
-        control_expr.children.extend(cond_body.children)
-        return control_expr
-
-    def control_exprs(self, tree):
-        control_expr = tree.children[0]
-        cond_body = control_expr.children[2]
-        del control_expr.children[2]
-        elexpr = cond_body.children[1]
-        if elexpr is not None:
-            cond_body.children[1] = cond_body.children[1].children[0]
-        control_expr.children.extend(cond_body.children)
-        return control_expr
-
-    def more_param_eles(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        original_child = tree.children[1]
-        del tree.children[1]
-        if original_child is not None:
-            tree.children.extend(original_child.children)
-        return tree
-
-    def param_eles(self, tree):
-        original_child = tree.children[1]
-        del tree.children[1]
-        if original_child is not None:
-            tree.children.extend(original_child.children)
-        return tree
-
-    def param_ele(self, tree):
-        if tree.children[2] is not None:
-            tree.children[2] = tree.children[2].children[1]
-        return tree
-
-    def list(self, tree):
-        del tree.children[0]
-        del tree.children[-1]
-        tree.children = [x for x in tree.children if x is not None]
-        if len(tree.children) > 0 and tree.children[0] is not None:
-            elements = tree.children[0]
-            del tree.children[0]
-            tree.children.extend(elements.children)
-            tree.children = [x for x in tree.children if x is not None]
-        return tree
-
-    def list_body(self, tree):
-        return tree.children[0]
-
-    def list_elements(self, tree):
-        more_elements = tree.children[1]
-        del tree.children[1]
-        if more_elements is not None and not isinstance(more_elements, Token):
-            tree.children.extend(more_elements.children)
-        return tree
-
-    def more_list_elements(self, tree):
-        if len(tree.children) == 1:
-            return Discard
-        del tree.children[0]
-        del tree.children[0]
-        next_element = tree.children[1]
-        del tree.children[1]
-        if next_element is not None and not isinstance(next_element, Token):
-            tree.children.extend(next_element.children)
-        return tree
-
-    def dict(self, tree):
-        del tree.children[0]
-        del tree.children[-1]
-        tree.children = [x for x in tree.children if x is not None]
-        if len(tree.children) == 1:
-            elements = tree.children[0]
-            del tree.children[0]
-            if not isinstance(elements, Token):
-                tree.children.extend(elements.children)
-        return tree
-
-    def dict_element(self, tree):
-        tree.children = [x for x in tree.children if x is not None]
-        del tree.children[1]
-        return tree
-
-    def dict_elements(self, tree):
-        more_elements = tree.children[1]
-        del tree.children[1]
-        if more_elements is not None:
-            tree.children.extend(more_elements.children)
-        return tree
-
-    def more_dict_elements(self, tree):
-        tree.children = [x for x in tree.children if x is not None]
-        del tree.children[0]
-        if len(tree.children) > 1:
-            next_element = tree.children[1]
-            del tree.children[1]
-            if not isinstance(next_element, Token):
-                tree.children.extend(next_element.children)
-        return tree
-
-    def group(self, tree):
-        next_group = tree.children[1]
-        del tree.children[1]
-        if next_group is not None and not isinstance(next_group, Token):
-            tree.children.extend(next_group.children)
-        return tree
-
-    def more_group(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        next_group = tree.children[1]
-        del tree.children[1]
-        if next_group is not None:
-            tree.children.extend(next_group.children)
-        return tree
-
-    def slice(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[-1]
-        del tree.children[-1]
-        return tree
-
-    def range(self, tree):
-        del tree.children[2]
-        del tree.children[2]
-        del tree.children[2]
-        return tree
-
-    def range_start(self, tree):
-        if tree.children[0] is not None:
-            tree.children[0] = tree.children[0].children[0]
-            if isinstance(tree.children[0], Token) and tree.children[0].type == "LT":
-                tree.children[0] = None
-        if tree.children[1] is not None:
-            tree.children[1] = tree.children[1].children[0]
-        return tree
-
-    def range_end(self, tree):
-        if tree.children[0] is not None:
-            tree.children[0] = tree.children[0].children[0]
-        if tree.children[1] is not None:
-            tree.children[1] = tree.children[1].children[0]
-            if isinstance(tree.children[1], Token) and tree.children[1].type == "GT":
-                tree.children[1] = None
-        return tree
-
-    def range_step(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[-2]
-        return tree
-
-    def for_in(self, tree):
-        del tree.children[1]
-        return tree
-
-    def classdecl(self, tree):
-        if len(tree.children) == 5 and tree.children[3] is None:
-            del tree.children[3]
-        return tree
-
-    def class_parents(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        more_class_parents = tree.children[1]
-        del tree.children[1]
-        if more_class_parents is not None:
-            tree.children.extend(more_class_parents.children)
-        return tree
-
-    def more_class_parents(self, tree):
-        del tree.children[0]
-        del tree.children[0]
-        del tree.children[0]
-        more_class_parents = tree.children[1]
-        del tree.children[1]
-        if more_class_parents is not None:
-            tree.children.extend(more_class_parents.children)
-        return tree
-
-    def class_parent_ele(self, tree):
-        return tree
-
-    def more_disjunction(self, tree):
-        del tree.children[0]
-        del tree.children[1]
-        return tree
-
-    def more_conjunction(self, tree):
-        del tree.children[0]
-        del tree.children[1]
-        return tree
 
 class MissingSymbolError(Exception):
     pass
@@ -1023,20 +732,20 @@ class KwArg:
         return self.__str__()
 
 class CallArgs:
-    def __init__(self, *pos_args, **kw_args):
-        self.pos_args = list(pos_args)
-        self.kw_args = kw_args
-
-    def add_arg(self, new_arg):
-        if isinstance(new_arg, PosArg):
-            self.pos_args.append(new_arg.value)
-        elif isinstance(new_arg, KwArg):
-            self.kw_args[new_arg.name] = new_arg.value
-        else:
-            raise ValueError("Unknown arg")
+    def __init__(self, args=None):
+        self.pos_args = []
+        self.kw_args = {}
+        if args is not None:
+            for arg in args:
+                if isinstance(arg, PosArg):
+                    self.pos_args.append(arg.value)
+                elif isinstance(arg, KwArg):
+                    if arg.name in self.kw_args:
+                        raise ValueError("Duplicate kwarg name '{}'".format(arg.name))
+                    self.kw_args[arg.name] = arg.value
 
     def __str__(self):
-        return "{}".format(", ".join([str(x) for x in self.pos_args] + ["{}={}".format(k, v) for k, v in self.kw_args.items()]))
+        return "CallArgs: {}".format(", ".join([str(x) for x in self.pos_args] + ["{}={}".format(k, v) for k, v in self.kw_args.items()]))
 
     def __repr__(self):
         return self.__str__()
@@ -1147,7 +856,7 @@ class UnOp:
             raise ValueError("Unhandled operator '{}'".format(self.operator))
 
 class ExitExpr:
-    def __init__(self, exit_type, exit_val, exit_dir):
+    def __init__(self, exit_type, exit_val=None, exit_dir=None):
         self.exit_type = exit_type
         self.exit_val = exit_val
         self.exit_dir = exit_dir
@@ -1173,7 +882,7 @@ class ExitExpr:
             return break_val
 
 class AssignOp:
-    def __init__(self, target, type_expr, operator, value):
+    def __init__(self, target, operator, value, type_expr=None):
         self.target = target
         self.type_expr = type_expr
         self.operator = operator
@@ -1198,14 +907,14 @@ class AssignOp:
             return target.eval(symbol_table, assign=True, assign_val=self.value.eval(symbol_table))
 
 class IfExpr:
-    def __init__(self, guard, body, else_expr):
+    def __init__(self, guard, body, elexpr=None):
         self.guard = guard
         self.body = body
-        self.else_expr = else_expr
+        self.elexpr = elexpr
 
     def __str__(self):
         return "If: {} then {}{}".format(self.guard, self.body,
-                " else {}".format(self.else_expr) if self.else_expr is not None else "")
+                " else {}".format(self.elexpr) if self.elexpr is not None else "")
 
     def __repr__(self):
         return self.__str__()
@@ -1219,18 +928,18 @@ class IfExpr:
                 val = symbol_table.break_val
             return val
         symbol_table = symbol_table.pop_scope()
-        if self.else_expr is not None:
-            return self.else_expr.eval(symbol_table)
+        if self.elexpr is not None:
+            return self.elexpr.eval(symbol_table)
 
 class WhileExpr:
-    def __init__(self, guard, body, else_expr):
+    def __init__(self, guard, body, elexpr=None):
         self.guard = guard
         self.body = body
-        self.else_expr = else_expr
+        self.elexpr = elexpr
 
     def __str__(self):
         return "If: {} then {}{}".format(self.guard, self.body,
-                " else {}".format(self.else_expr) if self.else_expr is not None else "")
+                " else {}".format(self.elexpr) if self.elexpr is not None else "")
 
     def __repr__(self):
         return self.__str__()
@@ -1249,8 +958,8 @@ class WhileExpr:
         symbol_table = symbol_table.pop_scope()
         if at_least_once:
             return last_val
-        elif self.else_expr is not None:
-            return self.else_expr.eval(symbol_table)
+        elif self.elexpr is not None:
+            return self.elexpr.eval(symbol_table)
 
 class ArgumentError(Exception):
     pass
@@ -1382,7 +1091,7 @@ class DeclArgList:
         return pos_args_names, args_dict, va_args_name, va_kw_args_name
 
 class FnDeclExpr:
-    def __init__(self, name, args, body, type_expr):
+    def __init__(self, name, args, body, type_expr=None):
         self.name = name
         self.args = args
         self.body = body
@@ -1401,12 +1110,28 @@ class FnDeclExpr:
             symbol_table.assign(self.name.name, fndef, properties=properties, immediate=class_decl)
         return fndef
 
+class OpDeclExpr:
+    def __init__(self, operator, args, body, type_expr=None):
+        self.operator = operator
+        self.args = args
+        self.body = body
+        self.type_expr = type_expr
+
+    def __str__(self):
+        return "OpDecl: {}({}) {}".format(self.name if self.name is not None else "", self.args if self.args is not None else "", self.body)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table, properties=None, class_decl=False):
+        NotImplementedError
+
 class ForExpr:
-    def __init__(self, induction_var, induction_expr, body, else_expr=None):
+    def __init__(self, induction_var, induction_expr, body, elexpr=None):
         self.induction_var = induction_var
         self.induction_expr = induction_expr
         self.body = body
-        self.else_expr = else_expr
+        self.elexpr = elexpr
 
     def __str__(self):
         return "For: {} in {} do {}".format(self.induction_var,
@@ -1437,8 +1162,8 @@ class ForExpr:
         symbol_table = symbol_table.pop_scope()
         if at_least_once:
             return last_val
-        elif self.else_expr is not None:
-            return self.else_expr.eval(symbol_table)
+        elif self.elexpr is not None:
+            return self.elexpr.eval(symbol_table)
 
 class DefaultInit:
     def __init__(self):
@@ -1534,6 +1259,24 @@ class ObjDef:
         else:
             raise ValueError("Not class")
 
+class ClassParentDecl:
+    def __init__(self, expr, assignment=None):
+        self.expr = expr
+        self.assignment = assignment
+
+    def __str__(self):
+        return "ClassParentDecl: {}{}".format(self.expr, format_or_empty("={}", self.assignment))
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        if self.assignment is not None:
+            raise NotImplementedError
+        elif not (isinstance(self.expr, NameRef) or isinstance(self.expr, ClassDecl)):
+            raise NotImplementedError
+        return self.expr.eval(symbol_table)
+
 class ClassDecl:
     def __init__(self, class_type, name=None, body=None, parents=None):
         self.class_type = class_type
@@ -1558,6 +1301,79 @@ class ClassDecl:
         if self.name:
             symbol_table.assign(self.name.name, classdef, properties=properties, immediate=class_decl)
         return classdef
+
+class NamespaceDecl:
+    def __init__(self, name=None, body=None):
+        self.name = name
+        self.body = body
+        self.whole_file = False
+        if self.body is None:
+            self.whole_file = True
+
+    def __str__(self):
+        return "NamespaceDecl:{}{}{}".format(
+            format_or_empty(" {}", self.name),
+            " (whole file)" if self.whole_file else "",
+            format_or_empty(" {}", self.body))
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        raise NotImplementedError
+
+class DoubleStarExpr:
+    def __init__(self, expr):
+        self.expr = expr
+
+    def __str__(self):
+        return "DoubleStarExpr: **{}".format(self.expr)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        raise NotImplementedError
+
+class StarExpr:
+    def __init__(self, expr):
+        self.expr = expr
+
+    def __str__(self):
+        return "StarExpr: *{}".format(self.expr)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        raise NotImplementedError
+
+class UsingExpr:
+    def __init__(self, target, as_expr=None):
+        self.target = target
+        self.as_expr = as_expr
+
+    def __str__(self):
+        return "UsingExpr: {}{}".format(self.target, format_or_empty(" as {}", self.as_expr))
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table):
+        raise NotImplementedError
+
+class BlockExpr:
+    def __init__(self, exprs):
+        self.exprs = exprs
+
+    def __str__(self):
+        return "BlockExpr: {}".format(self.exprs)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table, class_decl=False, return_scope=False):
+        return self.exprs.eval(symbol_table, class_decl=class_decl, return_scope=return_scope)
 
 class ExprList:
     def __init__(self, exprs):
@@ -1591,10 +1407,25 @@ class ExprList:
             return symbol_table
         return last_res
 
+class LabeledExpr:
+    def __init__(self, label, expr):
+        self.label = label
+        self.expr = expr
+
+    def __str__(self):
+        return "{}: {}".format(self.label, self.expr)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def eval(self, symbol_table, class_decl=False, return_scope=False):
+        return NotImplementedError
+
 class Expr:
-    def __init__(self, expr, properties=None):
+    def __init__(self, expr, properties=None, type_expr=None):
         self.expr = expr
         self.properties = properties
+        self.type_expr = type_expr
 
     def __str__(self):
         return "{}{}".format(format_or_empty("{} ", self.properties), self.expr)
@@ -1628,28 +1459,554 @@ class DisjRhs:
         self.rhs = rhs
 
 class HognoseASTGen(Interpreter):
-    def visit(self, tree, **kwargs):
-        return getattr(self, tree.data)(tree, **kwargs)
-
-    def visit_or_default(self, tree, default, **kwargs):
-        if tree is None:
-            return default
-        elif isinstance(tree, Tree):
-            return self.visit(tree, **kwargs)
+    def visit(self, tree):
+        if isinstance(tree, Tree):
+            if not hasattr(self, tree.data):
+                raise ValueError("No handler for '{}'".format(tree.data))
+            return getattr(self, tree.data)(tree)
         elif isinstance(tree, Token):
             return tree.value
         else:
-            return tree
+            raise ValueError("Unhandled tree type: '{}'".format(type(tree).__name__))
 
-    def visit_or_none(self, tree, **kwargs):
-        return self.visit_or_default(tree, None, **kwargs)
+    def visit_or_default(self, tree, default):
+        if tree is None:
+            return default
+        return self.visit(tree)
+
+    def visit_or_none(self, tree):
+        return self.visit_or_default(tree, None)
 
     def __default__(self, tree):
-        name = tree.data if hasattr(tree, "data") else tree.value
-        raise ValueError("No handler for '{}'".format(name))
+        raise ValueError("No handler for '{}'".format(tree.data))
+
+    def start(self, tree):
+        return self.visit(tree.children[0])
+
+    def expr_list(self, tree):
+        expr_list = []
+        expr = self.visit_or_none(tree.children[0])
+        if expr is not None:
+            expr_list.append(expr)
+        if len(tree.children) > 1:
+            more_expr_list = self.visit_or_none(tree.children[1])
+            if more_expr_list is not None:
+                expr_list.extend(more_expr_list.exprs)
+        return ExprList(expr_list)
+
+    def terminated_or_empty_expr(self, tree):
+        return self.visit(tree.children[0])
+
+    def terminated_expr(self, tree):
+        return self.visit(tree.children[0])
+
+    def empty_expr(self, tree):
+        return None
+
+    def expr_with_prop(self, tree):
+        expr = self.visit(tree.children[1])
+        properties = self.visit_or_none(tree.children[0])
+        return Expr(expr.expr, properties=properties, type_expr=expr.type_expr)
+
+    def properties(self, tree):
+        property_list = None
+        property = self.visit_or_none(tree.children[0])
+        if property is not None:
+            property_list = [property]
+            more_properties = self.visit_or_none(tree.children[1])
+            if more_properties is not None:
+                property_list.extend(more_properties)
+        return property_list
+
+    def more_properties(self, tree):
+        return self.properties(tree)
+
+    def property(self, tree):
+        return self.visit(tree.children[0])
+
+    def expr(self, tree):
+        expr = self.visit(tree.children[0])
+        type_expr = self.visit_or_none(tree.children[1])
+        if isinstance(expr, list):
+            raise Exception(tree.children[0].data)
+        return Expr(expr, type_expr=type_expr)
+
+    def using_expr(self, tree):
+        target = self.visit(tree.children[1])
+        as_expr = self.visit_or_none(tree.children[2])
+        return UsingExpr(target, as_expr=as_expr)
+
+    def using_as(self, tree):
+        return self.visit(tree.children[1])
+
+    def exit_expr(self, tree):
+        exit_type = self.visit(tree.children[0])
+        exit_val = self.visit_or_none(tree.children[1])
+        exit_dir = self.visit_or_none(tree.children[2])
+        return ExitExpr(exit_type, exit_val=exit_val, exit_dir=exit_dir)
+
+    def exit_type(self, tree):
+        return self.visit(tree.children[0])
+
+    def exit_direction(self, tree):
+        return self.visit(tree.children[1])
+
+    def type_expr(self, tree):
+        return self.visit(tree.children[1])
+
+    def assign(self, tree):
+        target = self.visit(tree.children[0])
+        operator = self.visit(tree.children[2])
+        value = self.visit(tree.children[3])
+        type_expr = self.visit_or_none(tree.children[1])
+        return AssignOp(target, operator, value, type_expr=type_expr)
+
+    def group(self, tree):
+        expr_list = [self.visit(tree.children[0])]
+        more_expr = self.visit_or_none(tree.children[1])
+        if more_expr is not None:
+            expr_list.extend(more_expr)
+        return Group(expr_list)
+
+    def more_group(self, tree):
+        if len(tree.children) == 1:
+            return None
+        expr_list = [self.visit(tree.children[1])]
+        more_expr = self.visit_or_none(tree.children[2])
+        if more_expr is not None:
+            expr_list.extend(more_expr)
+        return expr_list
+
+    def single_star_expr(self, tree):
+        return StarExpr(self.visit(tree.children[1]))
+
+    def double_star_expr(self, tree):
+        return DoubleStarExpr(self.visit(tree.children[1]))
+
+    def fndecl(self, tree):
+        name = self.visit_or_none(tree.children[1])
+        args = DeclArgList(self.visit_or_none(tree.children[3]))
+        type_expr = self.visit_or_none(tree.children[5])
+        body = self.visit(tree.children[6])
+        return FnDeclExpr(name, args, body, type_expr)
+
+    def fnparams(self, tree):
+        return self.visit(tree.children[0])
+
+    def pos_only_params(self, tree):
+        params = [DeclArg(x.name, type_expr=x.type_expr, default=x.default, pos_only=True) for x in self.visit(tree.children[0])]
+        pos_or_kw_args = self.visit_or_none(tree.children[3])
+        if pos_or_kw_args is not None:
+            params.extend(pos_or_kw_args)
+        return params
+
+    def opt_pos_or_kw_args(self, tree):
+        return self.visit(tree.children[1])
+
+    def pos_or_kw_args(self, tree):
+        params = self.visit(tree.children[0])
+        va_and_kw_only_args = self.visit_or_none(tree.children[1])
+        if va_and_kw_only_args is not None:
+            params.extend(va_and_kw_only_args)
+        return params
+
+    def opt_va_args_kw_only(self, tree):
+        return self.visit(tree.children[1])
+
+    def va_args_kw_only(self, tree):
+        params = None
+        va_args = self.visit(self.children[0])
+        if va_args is not None:
+            params = [va_args]
+        opt_params = [DeclArg(x.name, type_expr=x.type_expr, default=x.default, kw_only=True) for x in self.visit(tree.children[1])] if tree.children[1] is not None else None
+        if opt_params is not None:
+            params.extend(opt_params)
+        kw_va_args = self.visit_or_none(self.children[2])
+        if kw_va_args is not None:
+            params.extend(kw_va_args)
+        return params
+
+    def star_param_ele_or_star(self, tree):
+        param = self.visit(tree.children[0])
+        if isinstance(param, VaDeclArg):
+            return param
+        return None
+
+    def opt_kw_va_args(self, tree):
+        return self.visit(tree.children[1])
+
+    def kw_va_args(self, tree):
+        return self.visit(tree.children[0])
+
+    def opt_param_eles(self, tree):
+        return self.visit(tree.children[1])
+
+    def param_eles(self, tree):
+        params = [self.visit(tree.children[0])]
+        more_params = self.visit_or_none(tree.children[1])
+        if more_params is not None:
+            params.extend(more_params)
+        return params
+
+    def param_ele(self, tree):
+        name = self.visit(tree.children[0])
+        type_expr = self.visit_or_none(tree.children[1])
+        default = self.visit_or_none(tree.children[2])
+        return DeclArg(name, type_expr=type_expr, default=default)
+
+    def more_param_eles(self, tree):
+        params = [self.visit(tree.children[1])]
+        more_params = self.visit_or_none(tree.children[2])
+        if more_params is not None:
+            params.extend(more_params)
+        return params
+
+    def star_param_ele(self, tree):
+        name = self.visit(tree.children[0])
+        type_expr = self.visit_or_none(tree.children[1])
+        return VaDeclArg(name, type_expr=type_expr)
+
+    def double_star_param_ele(self, tree):
+        name = self.visit(tree.children[0])
+        type_expr = self.visit_or_none(tree.children[1])
+        return KwVaDeclArg(name, type_expr=type_expr)
+
+    def param_default(self, tree):
+        return self.visit(tree.children[1])
+
+    def operatordecl(self, tree):
+        operator = self.visit(tree.children[1])
+        args = DeclArgList(self.visit_or_none(tree.children[3]))
+        type_expr = self.visit_or_none(tree.children[5])
+        body = self.visit(tree.children[6])
+        return OpDeclExpr(operator, args, body, type_expr)
+
+    def classdecl(self, tree):
+        class_type = self.visit(tree.children[0])
+        name = self.visit_or_none(tree.children[1])
+        parents = self.visit_or_none(tree.children[2])
+        body = self.visit(tree.children[3])
+        return ClassDecl(class_type, name, body, parents=parents)
+
+    def class_type(self, tree):
+        return self.visit(tree.children[0])
+
+    def class_parents(self, tree):
+        parent_eles = [self.visit(tree.children[1])]
+        more_eles = self.visit_or_none(tree.children[2])
+        if more_eles is not None:
+            parent_eles.extend(more_eles)
+        return parent_eles
+
+    def more_class_parents(self, tree):
+        return self.class_parents(tree)
+
+    def class_parent_ele(self, tree):
+        return self.visit(tree.children[0])
+
+    def parent_name(self, tree):
+        name = self.visit(tree.children[0])
+        assignment = self.visit_or_none(tree.children[1])
+        return ClassParentDecl(name, assignment=assignment)
+
+    def class_parent_assign(self, tree):
+        return self.visit(tree.children[1])
+
+    def namespace_whole_file(self, tree):
+        name = self.visit(tree.children[1])
+        return NamespaceDecl(name=name)
+
+    def namespace_local(self, tree):
+        name = self.visit_or_none(tree.children[1])
+        body = self.visit(tree.children[2])
+        return NamespaceDecl(name=name, body=body)
+
+    def label(self, tree):
+        return self.visit(tree.children[0])
+
+    def labeled_block(self, tree):
+        label = self.visit(tree.children[0])
+        block = self.visit(tree.children[1])
+        return LabeledExpr(label, block)
+
+    def block(self, tree):
+        exprs = self.visit_or_default(tree.children[1], ExprList([]))
+        return BlockExpr(exprs)
+
+    def labeled_control_expr(self, tree):
+        label = self.visit(tree.children[0])
+        expr = self.visit(tree.children[1])
+        return LabeledExpr(label, expr)
+
+    def cond_body(self, tree):
+        return self.visit(tree.children[0]), self.visit_or_none(tree.children[1])
+
+    def if_expr(self, tree):
+        guard = self.visit(tree.children[1])
+        body, elexpr = self.visit(tree.children[2])
+        return IfExpr(guard, body, elexpr=elexpr)
+
+    def elif_expr(self, tree):
+        return self.if_expr(tree)
+
+    def for_in(self, tree):
+        return self.visit(tree.children[0]), self.visit(tree.children[2])
+
+    def for_expr(self, tree):
+        induction_var, induction_expr = self.visit(tree.children[1])
+        body, elexpr = self.visit(tree.children[2])
+        return ForExpr(induction_var, induction_expr, body, elexpr=elexpr)
+
+    def elfor_expr(self, tree):
+        return self.for_expr(tree)
+
+    def while_expr(self, tree):
+        guard = self.visit(tree.children[1])
+        body, elexpr = self.visit(tree.children[2])
+        return WhileExpr(guard, body, elexpr=elexpr)
+
+    def elexpr_or_else(self, tree):
+        return self.visit(tree.children[0])
+
+    def elexpr_or_else_real(self, tree):
+        return self.visit(tree.children[0])
+
+    def elexpr(self, tree):
+        return self.visit(tree.children[0])
+
+    def else_expr(self, tree):
+        return self.visit(tree.children[1])
+
+    def arith(self, tree):
+        return self.visit(self.children[0])
+
+    def range(self, tree):
+        start, start_closed = self.visit(tree.children[0])
+        step = self.visit_or_none(tree.children[1])
+        end, end_closed = self.visit(tree.children[3])
+        return RangeExpr(start=start, start_closed=start_closed,
+                         end=end, end_closed=end_closed, step=step)
+
+    def range_step(self, tree):
+        return self.visit(tree.children[1])
+
+    def range_start(self, tree):
+        start = self.visit(tree.children[0])
+        start_closed = False if tree.children[1] is None else True
+        return start, start_closed
+
+    def range_start_inner(self, tree):
+        expr = self.visit(tree.children[0])
+        if expr == "<":
+            return None
+        return expr
+
+    def range_end(self, tree):
+        end = self.visit(tree.children[1])
+        end_closed = False if tree.children[0] is None else True
+        return end, end_closed
+
+    def range_end_inner(self, tree):
+        expr = self.visit(tree.children[0])
+        if expr == ">":
+            return None
+        return expr
+
+    def disjunction(self, tree):
+        lhs = self.visit(tree.children[0])
+        operator = self.visit(tree.children[1])
+        rhs = self.visit(tree.children[2])
+        res = BinOp(lhs, operator, rhs)
+        cont = self.visit_or_none(tree.children[3])
+        if isinstance(cont, DisjRhs):
+            res = BinOp(res, cont.operator, cont.rhs)
+        elif cont is not None:
+            raise ValueError("Unexpected disjunction continuation type: '{}'".format(type(cont).__name__))
+        return res
+
+    def more_disjunction(self, tree):
+        operator = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[1])
+        cont = self.visit_or_none(tree.children[2])
+        if isinstance(cont, DisjRhs):
+            return DisjRhs(operator, BinOp(rhs, cont.operator, cont.rhs))
+        elif cont is None:
+            return DisjRhs(operator, rhs)
+        raise ValueError("Unexpected disjunction continuation type: '{}'".format(type(cont).__name__))
+
+    def conjunction(self, tree):
+        lhs = self.visit(tree.children[0])
+        operator = self.visit(tree.children[1])
+        rhs = self.visit(tree.children[2])
+        res = BinOp(lhs, operator, rhs)
+        cont = self.visit_or_none(tree.children[3])
+        if isinstance(cont, ConjRhs):
+            res = BinOp(res, cont.operator, cont.rhs)
+        elif cont is not None:
+            raise ValueError("Unexpected conjunction continuation type: '{}'".format(type(cont).__name__))
+        return res
+
+    def more_conjunction(self, tree):
+        operator = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[1])
+        cont = self.visit_or_none(tree.children[2])
+        if isinstance(cont, ConjRhs):
+            return ConjRhs(operator, BinOp(rhs, cont.operator, cont.rhs))
+        elif cont is None:
+            return ConjRhs(operator, rhs)
+        raise ValueError("Unexpected conjunction continuation type: '{}'".format(type(cont).__name__))
+
+    def binop(self, tree):
+        operator = self.visit(tree.children[1])
+        lhs = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[2])
+        return BinOp(lhs, operator, rhs)
+
+    def unop(self, tree):
+        operator = self.visit(tree.children[0])
+        rhs = self.visit(tree.children[1])
+        return UnOp(operator, rhs)
+
+    def inversion(self, tree):
+        return self.unop(tree)
+
+    def comparison(self, tree):
+        return self.binop(tree)
+
+    def bitwise_or(self, tree):
+        return self.binop(tree)
+
+    def bitwise_xor(self, tree):
+        return self.binop(tree)
+
+    def bitwise_and(self, tree):
+        return self.binop(tree)
+
+    def shift_expr(self, tree):
+        return self.binop(tree)
+
+    def sum(self, tree):
+        return self.binop(tree)
+
+    def term(self, tree):
+        return self.binop(tree)
+
+    def factor(self, tree):
+        return self.unop(tree)
+
+    def power(self, tree):
+        return self.binop(tree)
+
+    def primary(self, tree):
+        ref = self.visit(tree.children[0])
+        if len(tree.children) == 1:
+            return ref
+        access = self.visit_or_none(tree.children[1])
+        if access is None:
+            return ref
+        if isinstance(access, CallArgs):
+            return FuncCall(ref, access)
+        elif isinstance(access, Slice):
+            return SliceExpr(ref, access)
+        elif isinstance(access, FieldAccess):
+            return FieldAccessExpr(ref, access)
+        raise ValueError("Unexpected primary access type: '{}'".format(type(access).__name__))
+
+    def field_access(self, tree):
+        return FieldAccess(self.visit(tree.children[1]))
+
+    def slice(self, tree):
+        return Slice(self.visit(tree.children[0]))
+
+    def call_args(self, tree):
+        args = self.visit_or_none(tree.children[1])
+        return CallArgs(args)
+
+    def call_args_body(self, tree):
+        args = [self.visit(tree.children[0])]
+        more_args = self.visit_or_none(tree.children[1])
+        if more_args is not None:
+            args.extend(more_args)
+        return args
+
+    def more_call_args(self, tree):
+        args = [self.visit(tree.children[1])]
+        more_args = self.visit_or_none(tree.children[2])
+        if more_args is not None:
+            args.extend(more_args)
+        return args
+
+    def kw_arg(self, tree):
+        return KwArg(self.visit(tree.children[0]).name, self.visit(tree.children[2]))
+
+    def pos_arg(self, tree):
+        return PosArg(self.visit(tree.children[0]))
+
+    def slice(self, tree):
+        return Slice(self.visit(tree.children[1]))
 
     def parens(self, tree):
         return self.visit(tree.children[1])
+
+    def list(self, tree):
+        list_elements = self.visit_or_default(tree.children[1], list())
+        return LiteralList(list_elements)
+
+    def list_body(self, tree):
+        return self.visit(tree.children[0])
+
+    def list_elements(self, tree):
+        elements = [self.visit(tree.children[0])]
+        more_elements = self.visit_or_none(tree.children[1])
+        if more_elements is not None and more_elements != ",":
+            elements.extend(more_elements)
+        return elements
+
+    def list_element(self, tree):
+        return self.visit(tree.children[0])
+
+
+    def more_list_elements(self, tree):
+        if len(tree.children) == 1:
+            return None
+        elements = [self.visit(tree.children[1])]
+        more_elements = self.visit_or_none(tree.children[2])
+        if more_elements is not None and more_elements != ",":
+            elements.extend(more_elements)
+        return elements
+
+    def dict(self, tree):
+        dict_elements = self.visit(tree.children[1])
+        if dict_elements is None or dict_elements == ":":
+            dict_elements = dict()
+        else:
+            dict_elements = {k: v for k, v in dict_elements}
+        return LiteralDict(dict_elements)
+
+    def dict_body(self, tree):
+        dict_elements = self.visit(tree.children[0])
+        if dict_elements == ":":
+            return None
+        return dict_elements
+
+    def dict_elements(self, tree):
+        dict_elements = [self.visit(tree.children[0])]
+        more_elements = self.visit_or_none(tree.children[1])
+        if more_elements is not None and more_elements != ",":
+            dict_elements.extend(more_elements)
+        return dict_elements
+
+    def dict_element(self, tree):
+        return (self.visit(tree.children[0]), self.visit(tree.children[2]))
+
+    def more_dict_elements(self, tree):
+        if len(tree.children) == 1:
+            return None
+        dict_elements = [self.visit(tree.children[1])]
+        more_elements = self.visit_or_none(tree.children[2])
+        if more_elements is not None and more_elements != ",":
+            dict_elements.extend(more_elements)
+        return dict_elements
 
     def bin(self, tree):
         return LiteralInt(int(tree.children[0].value, 2))
@@ -1667,6 +2024,14 @@ class HognoseASTGen(Interpreter):
         else:
             return LiteralInt(int(str_val))
 
+    def d_ml_string(self, tree): # FIXME pretty sure this is wrong
+        new_string = tree.children[0].value[3:-3]
+        return LiteralString(str(new_string))
+
+    def s_ml_string(self, tree):
+        new_string = tree.children[0].value[3:-3]
+        return LiteralString(str(new_string))
+
     def d_sl_string(self, tree):
         new_string = tree.children[0].value[1:-1]
         return LiteralString(str(new_string))
@@ -1676,6 +2041,78 @@ class HognoseASTGen(Interpreter):
         return LiteralString(str(new_string))
 
     def string(self, tree):
+        return self.visit(tree.children[0])
+
+    def comp_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def single_comp_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def multi_comp_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def not_in(self, tree):
+        return "{} {}".format(self.visit(tree.children[0]), self.visit(tree.children[1]))
+
+    def in_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def is_not(self, tree):
+        return "{} {}".format(self.visit(tree.children[0]), self.visit(tree.children[1]))
+
+    def is_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def has(self, tree):
+        return self.visit(tree.children[0])
+
+    def of(self, tree):
+        return self.visit(tree.children[0])
+
+    def power_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def factor_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def term_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def sum_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def shift_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def band(self, tree):
+        return self.visit(tree.children[0])
+
+    def bxor(self, tree):
+        return self.visit(tree.children[0])
+
+    def bor(self, tree):
+        return self.visit(tree.children[0])
+
+    def land(self, tree):
+        return self.visit(tree.children[0])
+
+    def lor(self, tree):
+        return self.visit(tree.children[0])
+
+    def lnot(self, tree):
+        return self.visit(tree.children[0])
+
+    def assign_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def dot_op(self, tree):
+        return self.visit(tree.children[0])
+
+    def array_op(self, tree):
+        return "{}{}".format(self.visit(tree.children[0]), self.visit(tree.children[1]))
+
+    def op(self, tree):
         return self.visit(tree.children[0])
 
     def true(self, tree):
@@ -1688,331 +2125,16 @@ class HognoseASTGen(Interpreter):
         return LiteralNull()
 
     def name(self, tree):
-        return NameRef(tree.children[0].value)
+        return NameRef(self.visit(tree.children[0]))
+
+    def super_ref(self, tree):
+        return NameRef(self.visit(tree.children[0]))
 
     def self_ref(self, tree):
-        return NameRef(tree.children[0].value)
+        return NameRef(self.visit(tree.children[0]))
 
     def cls_ref(self, tree):
-        return NameRef(tree.children[0].value)
-
-    def list(self, tree):
-        return LiteralList([self.visit(x) for x in tree.children])
-
-    def dict_element(self, tree):
-        return DictEle(self.visit(tree.children[0]), self.visit(tree.children[-1]))
-
-    def dict(self, tree):
-        return LiteralDict({v.key: v.value for v in [self.visit(x) for x in tree.children]})
-
-    def range_end(self, tree):
-        end = self.visit_or_none(tree.children[1])
-        end_closed = False if tree.children[0] is None else True
-        return end, end_closed
-
-    def range_step(self, tree):
-        return self.visit(tree.children[0])
-
-    def range_start(self, tree):
-        start = self.visit_or_none(tree.children[0])
-        start_closed = False if tree.children[1] is None else True
-        return start, start_closed
-
-    def range(self, tree):
-        start, start_closed = self.visit(tree.children[0])
-        step = self.visit_or_none(tree.children[1])
-        end, end_closed = self.visit(tree.children[2])
-        return RangeExpr(start=start, start_closed=start_closed,
-                         end=end, end_closed=end_closed, step=step)
-
-    def field_access(self, tree):
-        return FieldAccess(self.visit(tree.children[1]))
-
-    def slice(self, tree):
-        return Slice(self.visit(tree.children[0]))
-
-    def pos_arg(self, tree):
-        return PosArg(self.visit(tree.children[0]))
-
-    def kw_arg(self, tree):
-        return KwArg(self.visit(tree.children[0]).name, self.visit(tree.children[2]))
-
-    def call_args(self, tree):
-        ret_args = CallArgs()
-        for child in tree.children:
-            ret_args.add_arg(self.visit(child))
-        return ret_args
-
-    def primary_assign(self, tree):
-        ref = self.visit(tree.children[0])
-        access = None
-        if len(tree.children) > 1:
-            access = self.visit(tree.children[1])
-        else:
-            return ref
-        if isinstance(access, Slice):
-            return SliceExpr(ref, access)
-        elif isinstance(access, FieldAccess):
-            return FieldAccessExpr(ref, access)
-        else:
-            raise ValueError("Haven't handled other stuff yet")
-
-    def primary(self, tree):
-        ref = self.visit(tree.children[0])
-        access = None
-        if len(tree.children) > 1:
-            access = self.visit(tree.children[1])
-        else:
-            return ref
-        if isinstance(access, CallArgs):
-            return FuncCall(ref, access)
-        elif isinstance(access, Slice):
-            return SliceExpr(ref, access)
-        elif isinstance(access, FieldAccess):
-            return FieldAccessExpr(ref, access)
-        else:
-            raise ValueError("Haven't handled other stuff yet")
-
-    def sum_op(self, tree):
-        return tree.children[0].value
-
-    def term_op(self, tree):
-        return tree.children[0].value
-
-    def assign_op(self, tree):
-        return tree.children[0].value
-
-    def single_comp_op(self, tree):
-        return tree.children[0].value
-
-    def comp_op(self, tree):
-        return self.visit(tree.children[0])
-
-    def lor(self, tree):
-        return tree.children[0].value
-
-    def land(self, tree):
-        return tree.children[0].value
-
-    def lnot(self, tree):
-        return tree.children[0].value
-
-    def bor(self, tree):
-        return tree.children[0].value
-
-    def band(self, tree):
-        return tree.children[0].value
-
-    def bxor(self, tree):
-        return tree.children[0].value
-
-    def shift_op(self, tree):
-        return tree.children[0].value
-
-    def power_op(self, tree):
-        return tree.children[0].value
-
-    def factor_op(self, tree):
-        return tree.children[0].value
-
-    def binop(self, tree):
-        if len(tree.children) == 1:
-            return tree
-        operator = self.visit(tree.children[1])
-        lhs = self.visit(tree.children[0])
-        rhs = self.visit(tree.children[2])
-        return BinOp(lhs, operator, rhs)
-
-    def unop(self, tree):
-        if len(tree.children) == 1:
-            return tree
-        operator = self.visit(tree.children[0])
-        rhs = self.visit(tree.children[1])
-        return UnOp(operator, rhs)
-
-    def term(self, tree):
-        return self.binop(tree)
-
-    def sum(self, tree):
-        return self.binop(tree)
-
-    def comparison(self, tree):
-        return self.binop(tree)
-
-    def bitwise_or(self, tree):
-        return self.binop(tree)
-
-    def bitwise_xor(self, tree):
-        return self.binop(tree)
-
-    def bitwise_and(self, tree):
-        return self.binop(tree)
-
-    def shift_expr(self, tree):
-        return self.binop(tree)
-
-    def power(self, tree):
-        return self.binop(tree)
-
-    def inversion(self, tree):
-        return self.unop(tree)
-
-    def factor(self, tree):
-        return self.unop(tree)
-
-    def more_disjunction(self, tree):
-        operator = self.visit(tree.children[0])
-        rhs = self.visit(tree.children[1])
-        cont = self.visit_or_none(tree.children[2])
-        if isinstance(cont, DisjRhs):
-            return DisjRhs(operator, BinOp(rhs, cont.operator, cont.rhs))
-        elif cont is None:
-            return DisjRhs(operator, rhs)
-        else:
-            raise Exception("more_disjunction")
-
-    def more_conjunction(self, tree):
-        operator = self.visit(tree.children[0])
-        rhs = self.visit(tree.children[1])
-        cont = self.visit_or_none(tree.children[2])
-        if isinstance(cont, ConjRhs):
-            return ConjRhs(operator, BinOp(rhs, cont.operator, cont.rhs))
-        elif cont is None:
-            return ConjRhs(operator, rhs)
-        else:
-            raise Exception("more_conjunction")
-
-    def disjunction(self, tree):
-        lhs = self.visit(tree.children[0])
-        operator = self.visit(tree.children[1])
-        rhs = self.visit(tree.children[2])
-        res = BinOp(lhs, operator, rhs)
-        cont = self.visit_or_none(tree.children[3])
-        if isinstance(cont, DisjRhs):
-            res = BinOp(res, cont.operator, cont.rhs)
-        elif cont is not None:
-            raise Exception("disjunction")
-        return res
-
-    def conjunction(self, tree):
-        lhs = self.visit(tree.children[0])
-        operator = self.visit(tree.children[1])
-        rhs = self.visit(tree.children[2])
-        res = BinOp(lhs, operator, rhs)
-        cont = self.visit_or_none(tree.children[3])
-        if isinstance(cont, ConjRhs):
-            res = BinOp(res, cont.operator, cont.rhs)
-        elif cont is not None:
-            raise Exception("conjunction")
-        return res
-
-    def if_expr(self, tree):
-        guard = self.visit(tree.children[1])
-        body = self.visit(tree.children[2])
-        else_expr = self.visit(tree.children[3]) if tree.children[3] is not None else None
-        return IfExpr(guard, body, else_expr)
-
-    def elif_expr(self, tree):
-        return self.if_expr(tree)
-
-    def while_expr(self, tree):
-        guard = self.visit(tree.children[1])
-        body = self.visit(tree.children[2])
-        else_expr = self.visit(tree.children[3]) if tree.children[3] is not None else None
-        return WhileExpr(guard, body, else_expr)
-
-    def elwhile_expr(self, tree):
-        return self.while_expr(tree)
-
-    def else_expr(self, tree):
-        return self.visit(tree.children[1])
-
-    def exit_direction(self, tree):
-        return self.visit(tree.children[-1]).name
-
-    def exit_expr(self, tree):
-        return ExitExpr(tree.children[0].value,
-                        self.visit(tree.children[1]) if tree.children[1] is not None else None,
-                        self.visit(tree.children[2]) if tree.children[2] is not None else None)
-
-    def param_eles(self, tree, pos_only=False, kw_only=False):
-        return [self.visit(x, pos_only=pos_only, kw_only=kw_only) for x in tree.children]
-
-    def param_ele(self, tree, pos_only=False, kw_only=False):
-        return DeclArg(self.visit(tree.children[0]),
-                       type_expr=self.visit_or_none(tree.children[1]),
-                       default=self.visit_or_none(tree.children[2]),
-                       pos_only=pos_only, kw_only=kw_only)
-
-    def pos_or_kw_args(self, tree):
-        args = self.visit(tree.children[0], pos_only=False, kw_only=False)
-        va_args_kw_only = self.visit_or_default(tree.children[1], [])
-        args.extend(va_args_kw_only)
-        return args
-
-    def fndecl(self, tree):
-        name = self.visit_or_none(tree.children[1])
-        args = DeclArgList(self.visit_or_none(tree.children[3]))
-        type_expr = self.visit_or_none(tree.children[5])
-        body = self.visit(tree.children[6])
-        return FnDeclExpr(name, args, body, type_expr)
-
-    def class_parent_ele(self, tree):
-        return self.visit(tree.children[0]) # FIXME
-
-    def class_parents(self, tree):
-        return [self.visit(child) for child in tree.children]
-
-    def classdecl(self, tree):
-        class_type = tree.children[0].value
-        name = self.visit_or_none(tree.children[1])
-        parents = self.visit_or_none(tree.children[2])
-        body = self.visit(tree.children[3])
-        return ClassDecl(class_type, name, body, parents=parents)
-
-    def assign(self, tree):
-        target = self.visit(tree.children[0])
-        type_expr = None
-        if tree.children[1] is not None:
-            type_expr = self.visit(tree.children[1])
-        operator = self.visit(tree.children[2])
-        value = self.visit(tree.children[3])
-        return AssignOp(target, type_expr, operator, value)
-
-    def for_in(self, tree):
-        return self.visit(tree.children[0]), self.visit(tree.children[1])
-
-    def for_expr(self, tree):
-        induction_var, induction_expr = self.visit(tree.children[1])
-        body = self.visit(tree.children[2])
-        else_expr = self.visit_or_none(tree.children[3])
-        return ForExpr(induction_var, induction_expr, body, else_expr)
-
-    def group(self, tree):
-        return Group([self.visit(x) for x in tree.children])
-
-    def expr(self, tree):
-        expr_to_eval = tree.children[0]
-        if isinstance(expr_to_eval, Tree):
-            return Expr(self.visit(expr_to_eval))
-        elif isinstance(expr_to_eval, Token):
-            return expr_to_eval.value
-        return expr_to_eval
-
-    def properties(self, tree):
-        return set([x.value for x in tree.children])
-
-    def expr_with_prop(self, tree):
-        return Expr(self.visit(tree.children[1]).expr, properties=self.visit_or_none(tree.children[0]))
-
-    def block(self, tree):
-        return self.visit(tree.children[1]) if tree.children[1] is not None else ExprList([])
-
-    def expr_list(self, tree):
-        return ExprList([self.visit(child) for child in tree.children])
-
-    def start(self, tree):
-        return self.visit(tree.children[0])
+        return NameRef(self.visit(tree.children[0]))
 
 class HognoseInterpreter:
     def __init__(self):
@@ -2028,19 +2150,19 @@ class HognoseInterpreter:
         })
 
     def parse(self, text, print_tree=False):
-        raw_parse_res = self.parser.parse(text)
         try:
-            parse_res = HognosePostParse().transform(raw_parse_res)
+            raw_parse_res = self.parser.parse(text)
+        except UnexpectedToken as e:
+            raise e from None
+        try:
+            parse_res = HognoseParseTreeGen().transform(raw_parse_res)
         except (VisitError, ParseError) as e:
             if print_tree:
                 tree_print(raw_parse_res)
             raise e from None
         if print_tree:
             tree_print(parse_res)
-        pre_ast = HognoseASTTransform(self.parser.rules).transform(parse_res)
-        if print_tree:
-            tree_print(pre_ast)
-        tree_ast = HognoseASTGen().visit(pre_ast)
+        tree_ast = HognoseASTGen().visit(parse_res)
         if print_tree:
             tree_print(tree_ast)
         self.scope = tree_ast.eval(self.scope, return_scope=True)

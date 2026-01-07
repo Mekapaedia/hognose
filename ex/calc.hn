@@ -1,21 +1,20 @@
 num_stack = []
 op_stack = []
-accum = null
 
-if (len(env.args) <= 2)
+if len(env.args) <= 2
 {
     print(env.args[0], env.args[1], "Calculator example. Usage: [CMD] NUM [+-*/] NUM [[+-*/] NUM ...]")
     return
 }
-elif (len(env.args) == 3)
+elif len(env.args) == 3
 {
     print(int(env.args[2]))
     return
 }
 
-for arg in (env.args[2..<len(env.args)]) # FIXME: bind slicing tighter than literal lists
+for arg in env.args[2..<len(env.args)]
 {
-    if (arg == "+" or arg == "-" or arg == "/" or arg == "*")
+    if arg == "+" or arg == "-" or arg == "/" or arg == "*"
     {
         op_stack.append(arg)
     }
@@ -28,28 +27,42 @@ for arg in (env.args[2..<len(env.args)]) # FIXME: bind slicing tighter than lite
             op_stack_top = op_stack.pop(-1)
             lhs = num_stack.pop(-1)
             rhs = num_stack.pop(-1)
-            if (op_stack_top == "/") # FIXME binding again
+            if op_stack_top == "/"
+            {
                 num_stack.insert(0, lhs / rhs)
-            elif (op_stack_top == "*")
+            }
+            elif op_stack_top == "*"
+            {
                 num_stack.insert(0, lhs * rhs)
-            elif (op_stack_top == "+")
+            }
+            elif op_stack_top == "+"
+            {
                 num_stack.insert(0, lhs + rhs)
-            elif (op_stack_top == "-")
+            }
+            elif op_stack_top == "-"
+            {
                 num_stack.insert(0, lhs - rhs)
+            }
         }
     }
 }
 final_op = op_stack.pop(-1)
 rhs = num_stack.pop(-1)
 lhs = num_stack.pop(-1)
-final_val = null
-if (final_op == "/") # FIXME also binding issues here
-    final_val = lhs / rhs
-elif (final_op == "*")
-    final_val = lhs * rhs
-elif (final_op == "+")
-    final_val = lhs + rhs
-elif (final_op == "-")
-    final_val = lhs - rhs
-
+final_val = if final_op == "/"
+{
+    lhs / rhs
+}
+elif final_op == "*"
+{
+    lhs * rhs
+}
+elif final_op == "+"
+{
+    lhs + rhs
+}
+elif final_op == "-"
+{
+    lhs - rhs
+}
 print(final_val)

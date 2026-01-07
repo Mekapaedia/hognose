@@ -6,8 +6,8 @@
 ?terminated_expr: expr_with_prop terminator
 empty_expr: terminator
 expr_with_prop: [properties] expr
-?properties: property [newlines] [more_properties]
-?more_properties: property [newlines] [more_properties]
+?properties: property newlines? [more_properties]
+?more_properties: property newlines? [more_properties]
 ?property: STATIC
          | PUBLIC
          | PRIVATE
@@ -21,9 +21,9 @@ expr_with_prop: [properties] expr
 
 ?expr: using_expr [type_expr]
 
-?using_expr: USING [newlines] primary [using_as]
+?using_expr: USING newlines? primary [using_as]
            | exit_expr
-?using_as: [newlines] AS [newlines] primary
+?using_as: newlines? AS newlines? primary
 
 ?exit_expr: exit_type [expr] [exit_direction]
           | assign
@@ -34,15 +34,15 @@ expr_with_prop: [properties] expr
           | LEAVE
           | DEFER
 
-?exit_direction: [newlines] TO [newlines] name
+?exit_direction: newlines? TO newlines? name
 
-?type_expr: [newlines] COLON [newlines] arith
-?assign: primary_assign [type_expr] [newlines] assign_op [newlines] expr
+?type_expr: newlines? COLON newlines? arith
+?assign: primary [type_expr] newlines? assign_op newlines? expr
        | group
 
 ?group: starred_expr more_group
       | starred_expr
-?more_group: [newlines] COMMA [newlines] starred_expr [more_group]
+?more_group: newlines? COMMA newlines? starred_expr [more_group]
            | COMMA
 
 ?starred_expr: single_star_expr
@@ -56,130 +56,134 @@ expr_with_prop: [properties] expr
                | classdecl
                | namespacedecl
                | labeled_block
-?fndecl: FN [name] [newlines] OPEN_PAREN [newlines] [fnparams] CLOSE_PAREN [type_expr] [newlines] expr
+?fndecl: FN [name] newlines? OPEN_PAREN newlines? [fnparams] CLOSE_PAREN [type_expr] newlines? expr
 ?fnparams: pos_only_params
-?pos_only_params: param_eles [newlines] COMMA [newlines] DIV [opt_pos_or_kw_args]
+?pos_only_params: param_eles newlines? COMMA newlines? DIV [opt_pos_or_kw_args]
                 | pos_or_kw_args
-?opt_pos_or_kw_args: COMMA [newlines] pos_or_kw_args
+?opt_pos_or_kw_args: COMMA newlines? pos_or_kw_args
 ?pos_or_kw_args: param_eles [opt_va_args_kw_only]
                | va_args_kw_only
-?opt_va_args_kw_only: COMMA [newlines] va_args_kw_only
+?opt_va_args_kw_only: COMMA newlines? va_args_kw_only
 ?va_args_kw_only: star_param_ele_or_star [opt_param_eles] [opt_kw_va_args]
                 | kw_va_args
 ?star_param_ele_or_star: star_param_ele
                        | STAR
-?opt_kw_va_args: COMMA [newlines] kw_va_args
+?opt_kw_va_args: COMMA newlines? kw_va_args
 ?kw_va_args: double_star_param_ele
-?opt_param_eles: COMMA [newlines] param_eles
+?opt_param_eles: COMMA newlines? param_eles
 param_eles: param_ele [more_param_eles]
 param_ele: name [type_expr] [param_default]
-?more_param_eles: COMMA [newlines] param_ele [more_param_eles]
+?more_param_eles: COMMA newlines? param_ele [more_param_eles]
 ?star_param_ele: STAR name [type_expr]
 ?double_star_param_ele: STAR_STAR name [type_expr]
-?param_default: [newlines] EQUAL starred_expr
-?operatordecl: OPERATOR op [newlines] OPEN_PAREN [newlines] [fnparams] CLOSE_PAREN [type_expr] [newlines] expr
+?param_default: newlines? EQUAL starred_expr
+?operatordecl: OPERATOR op newlines? OPEN_PAREN newlines? [fnparams] CLOSE_PAREN [type_expr] newlines? expr
 
-?classdecl: class_type [name] [class_parents] [newlines] block
-?class_type: CLASS | STATIC CLASS | TRAIT
-?class_parents: [newlines] COLON [newlines] class_parent_ele [more_class_parents]
-?more_class_parents: [newlines] COMMA [newlines] class_parent_ele [more_class_parents]
-?class_parent_ele: name [class_parent_assign]
+?classdecl: class_type [name] [class_parents] newlines? block
+?class_type: CLASS
+           | STATIC
+           | TRAIT
+?class_parents: newlines? COLON newlines? class_parent_ele [more_class_parents]
+?more_class_parents: newlines? COMMA newlines? class_parent_ele [more_class_parents]
+?class_parent_ele: parent_name
                  | classdecl
-?class_parent_assign: [newlines] EQUAL [newlines] structure_decl
+?parent_name: name [class_parent_assign]
+?class_parent_assign: newlines? EQUAL newlines? structure_decl
 
 ?namespacedecl: namespace_whole_file
               | namespace_local
-?namespace_whole_file: NAMESPACE name [block]
-?namespace_local: NAMESPACE [name] block
+?namespace_whole_file: NAMESPACE name
+?namespace_local: NAMESPACE [name] newlines? block
 
-?label: name COLON [newlines]
+?label: name COLON newlines?
 ?labeled_block: label block
               | block
               | control
-?block: OPEN_BRACE [expr_list] CLOSE_BRACE
+?block: OPEN_BRACE [expr_or_list] CLOSE_BRACE
+?expr_or_list: expr
+             | expr_list
 
-?control: labeled_control_exprs
-        | control_exprs
+?control: labeled_control_expr
+        | control_expr
         | arith
-?labeled_control_exprs: label [newlines] control_exprs
-control_exprs: if_expr
+?labeled_control_expr: label control_expr
+?control_expr: if_expr
              | for_expr
              | while_expr
-?cond_body: [newlines] expr [elexpr_or_else]
-?if_expr: IF expr cond_body
-?elif_expr: ELIF expr cond_body
+
+cond_body: newlines? block [elexpr_or_else]
+?if_expr: IF group cond_body
+?elif_expr: ELIF group cond_body
 
 ?for_in: group IN group
 ?for_expr: FOR for_in cond_body
 ?elfor_expr: ELFOR for_in cond_body
 
-?while_expr: WHILE expr cond_body
-?elwhile_expr: ELWHILE expr cond_body
+?while_expr: WHILE group cond_body
+?elwhile_expr: ELWHILE group cond_body
 
-?elexpr_or_else: [newlines] elexpr_or_else_real
-?elexpr_or_else_real: elexpr | else_expr
+elexpr_or_else: newlines? elexpr_or_else_real
+elexpr_or_else_real: elexpr | else_expr
 elexpr: elif_expr | elfor_expr | elwhile_expr
 
-?else_expr: ELSE [newlines] expr
+?else_expr: ELSE newlines? block
 
 // This bit is largely cribbed from https://docs.python.org/3/reference/grammar.html
 ?arith: range
-?range: range_start [range_step] [newlines] RANGE [newlines] range_end
+?range: range_start [range_step] newlines? RANGE newlines? range_end
       | disjunction
-range_step: [newlines] RANGE [newlines] disjunction
+range_step: newlines? RANGE newlines? disjunction
 range_start: range_start_inner [closed_start_op]
-closed_start_op: [newlines] GT
+closed_start_op: newlines? GT
 range_start_inner: disjunction
                  | LT
 range_end: [closed_end_op] range_end_inner
-closed_end_op: LT [newlines]
+closed_end_op: LT newlines?
 range_end_inner: disjunction
                | GT
-?disjunction: conjunction [newlines] lor [newlines] conjunction [more_disjunction]
+?disjunction: conjunction newlines? lor newlines? conjunction [more_disjunction]
             | conjunction
-?more_disjunction: [newlines] lor [newlines] conjunction [more_disjunction]
-?conjunction: inversion [newlines] land [newlines] inversion [more_conjunction]
+?more_disjunction: newlines? lor newlines? conjunction [more_disjunction]
+?conjunction: inversion newlines? land newlines? inversion [more_conjunction]
             | inversion
-?more_conjunction: [newlines] land [newlines] inversion [more_conjunction]
-?inversion: lnot [newlines] inversion
+?more_conjunction: newlines? land newlines? inversion [more_conjunction]
+?inversion: lnot newlines? inversion
           | comparison
-?comparison: bitwise_or [newlines] comp_op [newlines] comparison
+?comparison: bitwise_or newlines? comp_op newlines? comparison
            | bitwise_or
-?bitwise_or: bitwise_or [newlines] bor [newlines] bitwise_xor
+?bitwise_or: bitwise_or newlines? bor newlines? bitwise_xor
            | bitwise_xor
-?bitwise_xor: bitwise_xor [newlines] bxor [newlines] bitwise_and
+?bitwise_xor: bitwise_xor newlines? bxor newlines? bitwise_and
             | bitwise_and
-?bitwise_and: bitwise_and [newlines] band [newlines] shift_expr
+?bitwise_and: bitwise_and newlines? band newlines? shift_expr
             | shift_expr
-?shift_expr: shift_expr [newlines] shift_op [newlines] sum
+?shift_expr: shift_expr newlines? shift_op newlines? sum
            | sum
-?sum: sum [newlines] sum_op [newlines] term
+?sum: sum newlines? sum_op newlines? term
     | term
-?term: term [newlines] term_op [newlines] factor
+?term: term newlines? term_op newlines? factor
      | factor
-?factor: factor_op [newlines] factor
+?factor: factor_op newlines? factor
        | power
-?power: primary [newlines] power_op [newlines] factor
+?power: primary newlines? power_op newlines? factor
       | primary
 
-primary_assign: primary [newlines] access
-              | atom
-primary: primary [newlines] access
-        | atom
+primary: primary access
+       | atom
 ?access: field_access
        | call_args
        | slice
-?field_access: DOT [newlines] name_like
+?field_access: DOT newlines? name_like
 
-?call_args: OPEN_PAREN [newlines] [call_args_body] CLOSE_PAREN
-?call_args_body: call_args_ele [more_call_args] [newlines]
-?more_call_args: [newlines] COMMA [newlines] call_args_ele [more_call_args]
+?call_args: OPEN_PAREN newlines? [call_args_body] CLOSE_PAREN
+?call_args_body: call_args_ele [more_call_args] newlines?
+?more_call_args: newlines? COMMA newlines? call_args_ele [more_call_args]
 ?call_args_ele: pos_arg
               | kw_arg
-kw_arg: name [newlines] EQUAL [newlines] starred_expr
+kw_arg: name newlines? EQUAL newlines? starred_expr
 pos_arg: starred_expr
 
-?slice: OPEN_SQUARE [newlines] group [newlines] CLOSE_SQUARE
+?slice: OPEN_SQUARE newlines? group newlines? CLOSE_SQUARE
 
 ?atom: name_like
      | true
@@ -191,21 +195,21 @@ pos_arg: starred_expr
      | list
      | dict
 
-?parens: OPEN_PAREN [newlines] expr [newlines] CLOSE_PAREN
+?parens: OPEN_PAREN newlines? expr newlines? CLOSE_PAREN
 
-list: OPEN_SQUARE [newlines] [list_body] CLOSE_SQUARE
-?list_body: list_elements [newlines]
+list: OPEN_SQUARE newlines? [list_body] CLOSE_SQUARE
+?list_body: list_elements newlines?
 ?list_elements: list_element [more_list_elements]
 ?list_element: starred_expr
-?more_list_elements: [newlines] COMMA [newlines] list_element [more_list_elements]
+?more_list_elements: newlines? COMMA newlines? list_element [more_list_elements]
                    | COMMA
 
-?dict: OPEN_SQUARE [newlines] dict_body [newlines] CLOSE_SQUARE
+?dict: OPEN_SQUARE newlines? dict_body newlines? CLOSE_SQUARE
 ?dict_body: dict_elements
           | COLON
 ?dict_elements: dict_element [more_dict_elements]
-dict_element: starred_expr [newlines] COLON [newlines] starred_expr
-?more_dict_elements: [newlines] COMMA [newlines] dict_element [more_dict_elements]
+dict_element: starred_expr newlines? COLON newlines? starred_expr
+?more_dict_elements: newlines? COMMA newlines? dict_element [more_dict_elements]
                    | COMMA
 
 ?number: bin
@@ -228,11 +232,11 @@ s_sl_string: S_SL_STRING
 
 comp_op: single_comp_op | multi_comp_op
 single_comp_op: EQUAL_EQUAL | BANG_EQUAL | LE | LT | GE | GT
-multi_comp_op: not_in | in | is_not | is | has | of
+multi_comp_op: not_in | in_op | is_not | is_op | has | of
 not_in: NOT IN
-in: IN
+in_op: IN
 is_not: IS NOT
-is: IS
+is_op: IS
 has: HAS
 of: OF
 power_op: STAR_STAR
