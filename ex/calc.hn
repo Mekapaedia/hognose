@@ -25,34 +25,17 @@ for arg in (env.args[2..<len(env.args)]) # FIXME: bind slicing tighter than lite
         num_stack.append(arg)
         if len(op_stack) > 1
         {
-            if (op_stack[-1] == "/") # FIXME binding again
-            {
-                op_stack.pop(-1)
-                lhs = num_stack.pop(-1)
-                rhs = num_stack.pop(-1)
+            op_stack_top = op_stack.pop(-1)
+            lhs = num_stack.pop(-1)
+            rhs = num_stack.pop(-1)
+            if (op_stack_top == "/") # FIXME binding again
                 num_stack.insert(0, lhs / rhs)
-            }
-            elif (op_stack[-1] == "*")
-            {
-                op_stack.pop(-1)
-                lhs = num_stack.pop(-1)
-                rhs = num_stack.pop(-1)
+            elif (op_stack_top == "*")
                 num_stack.insert(0, lhs * rhs)
-            }
-            elif (op_stack[-1] == "+")
-            {
-                op_stack.pop(-1)
-                lhs = num_stack.pop(-1)
-                rhs = num_stack.pop(-1)
+            elif (op_stack_top == "+")
                 num_stack.insert(0, lhs + rhs)
-            }
-            elif (op_stack[-1] == "-")
-            {
-                op_stack.pop(-1)
-                lhs = num_stack.pop(-1)
-                rhs = num_stack.pop(-1)
+            elif (op_stack_top == "-")
                 num_stack.insert(0, lhs - rhs)
-            }
         }
     }
 }
