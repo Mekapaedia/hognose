@@ -28,21 +28,13 @@ for arg in env.args[2..<len(env.args)]
             lhs = num_stack.pop(-1)
             rhs = num_stack.pop(-1)
             if op_stack_top == "/"
-            {
                 num_stack.insert(0, lhs / rhs)
-            }
             elif op_stack_top == "*"
-            {
                 num_stack.insert(0, lhs * rhs)
-            }
             elif op_stack_top == "+"
-            {
                 num_stack.insert(0, lhs + rhs)
-            }
             elif op_stack_top == "-"
-            {
                 num_stack.insert(0, lhs - rhs)
-            }
         }
     }
 }
@@ -50,19 +42,11 @@ final_op = op_stack.pop(-1)
 rhs = num_stack.pop(-1)
 lhs = num_stack.pop(-1)
 final_val = if final_op == "/"
-{
     lhs / rhs
-}
 elif final_op == "*"
-{
     lhs * rhs
-}
 elif final_op == "+"
-{
     lhs + rhs
-}
 elif final_op == "-"
-{
     lhs - rhs
-}
 print(final_val)
