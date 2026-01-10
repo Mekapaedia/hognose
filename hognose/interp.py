@@ -16,6 +16,8 @@ class Interpreter:
                 raise ValueError("No parser '{}'. Choose from: {}".format(parser, list(parsers.keys())))
         elif inspect.isclass(parser) and issubclass(parser, BaseParser):
             self.parser = parser(**kwargs)
+        elif parser is None:
+            self.parser = parsers["ppeg"](**kwargs)
         else:
             raise ValueError("Invalid parser '{}' of type '{}'".format(parser, type(parser).__name__))
 
