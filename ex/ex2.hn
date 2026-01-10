@@ -226,9 +226,8 @@ obj4.cls.fries_yell()
 obj5 = a(ele=2, ele2="cheese")
 print(obj5.ele, obj5.ele2)
 
-
-lhs = 2
-rhs = 4
+lhs = true
+rhs = false
 print(lhs or rhs)
 print(lhs and rhs)
 print(lhs and not rhs and not lhs)
@@ -238,6 +237,12 @@ print(lhs or not rhs or not lhs)
 print(lhs and lhs and lhs and lhs)
 print(lhs or lhs or lhs or lhs)
 print(not lhs)
+true and print("should print")
+true or print("shouldn't print")
+false and print("shouldn't print")
+false or print("should print")
+lhs = 2
+rhs = 4
 print(lhs > rhs)
 print(lhs | rhs)
 print(lhs ^ rhs)

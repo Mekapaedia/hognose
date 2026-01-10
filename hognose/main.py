@@ -16,7 +16,7 @@ def str_to_bool(text):
 
 def get_arg_parser():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--parser", choices=list(parsers.keys()), default="lark", help="Parser to use")
+    parser.add_argument("--parser", choices=list(parsers.keys()), default="ppeg", help="Parser to use")
     parser.add_argument("--print-input", nargs='?', const=True, default=False, type=str_to_bool, help="Whether to print the input file")
     parser.add_argument("--print-tree", nargs='?', const=True, default=False, type=str_to_bool, help="Whether to print the parse tree")
     parser.add_argument("input_file", nargs='?', help="Input Hognose file. If not specified, will drop to REPL")

@@ -631,12 +631,24 @@ class BuiltinFnDef(FnDef):
         return "BuiltinFnDef: {}".format(self.body)
 
 class DeclArg:
-    def __init__(self, name, default=None, type_expr=None, pos_only=False, kw_only=False):
-        self.name = name
-        self.default = default
-        self.pos_only = pos_only
-        self.kw_only = kw_only
-        self.type_expr = type_expr
+    def __init__(self, name_or_source_arg, default=None, type_expr=None, pos_only=None, kw_only=None):
+        if isinstance(name_or_source_arg, DeclArg):
+            self.name = name_or_source_arg.name
+            self.default = name_or_source_arg.default if default is None else default
+            self.type_expr = name_or_source_arg.type_expr if type_expr is None else type_expr
+            self.pos_only = name_or_source_arg.pos_only if pos_only is None else pos_only
+            self.kw_only = name_or_source_arg.kw_only if kw_only is None else kw_only
+        elif isinstance(name_or_source_arg, str) or isinstance(name_or_source_arg, NameRef):
+            self.name = name_or_source_arg
+            self.default = default
+            self.type_expr = type_expr
+            self.pos_only = pos_only if pos_only is not None else False
+            self.kw_only = kw_only if kw_only is not None else False
+        else:
+            raise ValueError("DeclArg: Invalid name_or_source_arg: '{}'", name_or_source_arg)
+
+        if pos_only and kw_only:
+            raise ValueError("DeclArg: Cannot be both pos_only and kw_only")
 
     def __str__(self):
         return "DeclArg: {}{}".format(self.name, format_or_empty(" ={}", self.default))
@@ -679,7 +691,7 @@ class DeclArgList:
     def eval(self, symbol_table, class_decl=False):
         pos_args_names = [x.name.name for x in self.args if x.kw_only is False]
         args_dict = {v.name.name: v for v in self.args}
-        va_args_name = None
+        va_args_name = None # FIXME!!
         va_kw_args_name = None
         return pos_args_names, args_dict, va_args_name, va_kw_args_name
 
@@ -720,14 +732,14 @@ class OpDeclExpr:
         NotImplementedError
 
 class ForExpr:
-    def __init__(self, induction_var, induction_expr, body, elexpr=None):
-        self.induction_var = induction_var
+    def __init__(self, induction_vars, induction_expr, body, elexpr=None):
+        self.induction_vars = induction_vars
         self.induction_expr = induction_expr
         self.body = body
         self.elexpr = elexpr
 
     def __str__(self):
-        return "For: {} in {} do {}".format(self.induction_var,
+        return "For: {} in {} do {}".format(self.induction_vars,
                                             self.induction_expr,
                                             self.body)
     def __repr__(self):
@@ -736,7 +748,9 @@ class ForExpr:
     def eval(self, symbol_table, class_decl=False):
         at_least_once = False
         last_val = None
-        induction_var = self.induction_var
+        induction_var = self.induction_vars
+        if isinstance(induction_var, list):
+            induction_var = induction_var[0] # FIXME
         if hasattr(induction_var, "expr"):
             induction_var = induction_var.expr
         induction_var = induction_var.name # FIXME
@@ -825,6 +839,7 @@ class ObjDef:
                 self.members.assign(pos_arg_name, pos_arg.eval(symbol_table), immediate=True)
                 set_members.append(pos_arg_name)
             for arg_name, arg_val in kw_args.items():
+                arg_name = arg_name.name
                 if arg_name in set_members:
                     raise ArgumentError("Multiple values for arg '{}'".format(arg_name))
                 self.members.assign(arg_name, arg_val.eval(symbol_table), immediate=True)
@@ -892,7 +907,7 @@ class ClassDecl:
         members = self.body.eval(symbol_table, class_decl=True)
         class_members, instance_members = members.split_by_prop("static")
         parents = [x.eval(symbol_table) for x in self.parents]
-        classdef = ObjDef(self.class_type, members=class_members, instance_members=instance_members, parents=parents, obj_name=self.name.name, symbol_table=symbol_table)
+        classdef = ObjDef(self.class_type, members=class_members, instance_members=instance_members, parents=parents, obj_name=self.name.name if self.name is not None else None, symbol_table=symbol_table)
         if self.name:
             symbol_table.assign(self.name.name, classdef, properties=properties, immediate=class_decl)
         return classdef
@@ -972,7 +987,12 @@ class BlockExpr:
 
 class ExprList:
     def __init__(self, exprs):
-        self.exprs = list(exprs)
+        if isinstance(exprs, ExprList):
+            self.exprs = exprs.exprs
+        elif isinstance(exprs, Expr):
+            self.exprs = [exprs.expr]
+        else:
+            self.exprs = list(exprs)
 
     def __str__(self):
         return "ExprList: {}".format("\n".join([str(x) for x in self.exprs]))
@@ -980,7 +1000,7 @@ class ExprList:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, class_decl=False, return_scope=False):
+    def eval(self, symbol_table, class_decl=False, return_scope=False, properties=None):
         last_res = None
         symbol_table = symbol_table.push_scope()
         if class_decl is True:
@@ -988,7 +1008,7 @@ class ExprList:
         for expr in self.exprs:
             next_res = None
             if class_decl is True:
-                next_res = expr.eval(symbol_table, class_decl=class_decl)
+                next_res = expr.eval(symbol_table, properties=properties, class_decl=class_decl)
             else:
                 next_res = expr.eval(symbol_table)
             if symbol_table.break_called:
@@ -999,6 +1019,8 @@ class ExprList:
                 break
             last_res = next_res
         if return_scope:
+            if isinstance(last_res, Scope):
+                return last_res
             return symbol_table
         return last_res
 
@@ -1028,18 +1050,22 @@ class Expr:
     def __repr__(self):
         return self.__str__()
 
-    def eval(self, symbol_table, class_decl=False, return_scope=False):
+    def eval(self, symbol_table, properties=None, class_decl=False, return_scope=False):
+        if properties is None:
+            properties = self.properties
         ret_val = None
         if class_decl is True:
             return_scope = True
         if self.properties is not None or class_decl is not False: # FIXME
-            ret_val = self.expr.eval(symbol_table, properties=self.properties, class_decl=class_decl)
+            ret_val = self.expr.eval(symbol_table, properties=properties, class_decl=class_decl)
         else:
             ret_val = self.expr.eval(symbol_table)
         if symbol_table.break_called:
             if symbol_table.break_val is not None:
                 ret_val = symbol_table.break_val
         if return_scope:
+            if isinstance(ret_val, Scope):
+                return ret_val
             return symbol_table
         return ret_val
 

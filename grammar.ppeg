@@ -1,8 +1,11 @@
 start = expr_list
 
-expr_list = ws_inline? statement+ ws_inline?
+expr_list = ws_inline? statements ws_inline?
           / ws_inline? expr ws_inline?
           / ws_inline? ws ws_inline?
+
+statements = statement more_statements?
+more_statements = statement more_statements?
 
 statement = terminated_expr
           / empty_expr
@@ -10,7 +13,8 @@ statement = terminated_expr
 terminated_expr = ws_inline? properties? expr ws_inline? terminator
 empty_expr = ws_inline? terminator
 
-properties = property+
+properties = property more_properties?
+more_properties = property more_properties?
 property = property_name ws?
 property_name = STATIC
               / PUBLIC
@@ -25,17 +29,18 @@ property_name = STATIC
 
 expr = group type_expr?
 
-group = single_expr (ws? COMMA ws? single_expr)*
+group = single_expr more_group?
+more_group = ws? COMMA ws? single_expr more_group?
 
 single_expr = exit_expr
             / using_expr
             / exit_expr
-            / assign
             / structure_decl
             / control
             / labeled_block
             / starred_expr
             / arith
+            / assign
 
 using_expr = USING ws? primary using_as?
 using_as = ws? AS ws? primary
@@ -94,15 +99,16 @@ classdecl = class_type ws_inline? name class_parents ws? expr
 class_type = CLASS
            / STATIC
            / TRAIT
-class_parents = ws? COLON ws? parent_name more_class_parents*
-more_class_parents = ws? COMMA ws? parent_name
+class_parents = ws? COLON ws? parent_name more_class_parents?
+more_class_parents = ws? COMMA ws? parent_name more_class_parents?
 parent_name = name class_parent_assign?
 class_parent_assign = ws? EQUAL ws? expr
 
 namespacedecl = namespace_local
               / namespace_whole_file
-namespace_whole_file = NAMESPACE name
-namespace_local = NAMESPACE name? ws? block
+namespace_whole_file = NAMESPACE ws_inline? name
+namespace_local = NAMESPACE namespace_name? ws? block
+namespace_name = ws_inline? name
 
 label = name COLON ws?
 labeled_block = label? block
@@ -113,9 +119,7 @@ control_expr = if_expr
              / for_expr
              / while_expr
 
-cond_body = ws? expr elexpr+ ws? else_expr
-          / ws? expr ws? else_expr
-          / ws? expr ws? elexpr+
+cond_body = ws? expr elexpr_or_else_expr
           / ws? expr
 if_expr = IF ws? expr cond_body
 elif_expr = ELIF ws? expr cond_body
@@ -127,13 +131,15 @@ elfor_expr = ELFOR for_in cond_body
 while_expr = WHILE ws? expr cond_body
 elwhile_expr = ELWHILE ws? expr cond_body
 
-elexpr = ws? elif_expr
-       / ws? elfor_expr
-       / ws? elwhile_expr
+elexpr_or_else_expr = ws? else_expr
+                    / ws? elexpr
+elexpr = elif_expr
+       / elfor_expr
+       / elwhile_expr
 else_expr = ELSE ws? expr
 
 # This bit is largely cribbed from https://docs.python.org/3/reference/grammar.html
-arith = range
+arith = range !(ws? assign_op)
 range = range_start ws? RANGE ws? disjunction ws? RANGE ws? range_end
       / range_start ws? RANGE ws? range_end
       / disjunction
@@ -146,11 +152,13 @@ range_end = LT GT
           / GT
           / LT ws? disjunction
           / disjunction
-disjunction = conjunction (ws? lor ws? conjunction)+
+disjunction = conjunction more_disjunction
             / conjunction
+more_disjunction = ws? lor ws? conjunction more_disjunction?
 
-conjunction = inversion (ws? land ws? inversion)+
+conjunction = inversion more_conjunction
             / inversion
+more_conjunction = ws? land ws? inversion more_conjunction?
 
 inversion = lnot ws? inversion
           / comparison
@@ -181,28 +189,30 @@ factor = factor_op ws? factor
 power = primary ws? power_op ws? factor
       / primary
 
-primary_list = primary more_primary_list*
-more_primary_list = ws? COMMA ws? primary
-primary = atom access*
+primary_list = primary more_primary_list?
+more_primary_list = ws? COMMA ws? primary more_primary_list?
+primary = atom access?
 
-access = ws? field_access
-       / ws? call_args
-       / ws? slice
+access = ws? field_access access?
+       / ws? call_args access?
+       / ws? slice access?
 field_access = DOT ws? name_like
 
 call_args = OPEN_PAREN ws? call_args_body? ws? CLOSE_PAREN
-call_args_body = call_args_ele (ws? COMMA ws? call_args_ele)*
+call_args_body = call_args_ele more_call_args_body?
+more_call_args_body = ws? COMMA ws? call_args_ele more_call_args_body?
+
 call_args_ele = kw_arg
               / pos_arg
-kw_arg = name ws? EQUAL ws? expr
-pos_arg = expr
+kw_arg = name ws? EQUAL ws? single_expr
+pos_arg = single_expr ws? !assign_op
 
 slice = OPEN_SQUARE ws? group ws? CLOSE_SQUARE
 
-atom = name_like
-     / true
+atom = true
      / false
      / null
+     / name_like
      / string
      / number
      / parens
@@ -213,15 +223,15 @@ parens = OPEN_PAREN ws? expr ws? CLOSE_PAREN
 
 list = OPEN_SQUARE ws? list_body? CLOSE_SQUARE
 list_body = list_elements ws?
-list_elements = expr more_list_elements?
-more_list_elements = ws? COMMA ws? expr more_list_elements?
+list_elements = single_expr more_list_elements?
+more_list_elements = ws? COMMA ws? single_expr more_list_elements?
                    / COMMA
 
 dict = OPEN_SQUARE ws? dict_body ws? CLOSE_SQUARE
 dict_body = dict_elements
           / COLON
 dict_elements = dict_element more_dict_elements?
-dict_element = expr ws? COLON ws? expr
+dict_element = single_expr ws? COLON ws? single_expr
 more_dict_elements = ws? COMMA ws? dict_element more_dict_elements?
                    / COMMA
 
@@ -298,7 +308,7 @@ terminator = SEMI_COLON
 
 ws = WS_INLINE ws?
    / NEWLINE ws?
-ws_inline = WS_INLINE+
+ws_inline = WS_INLINE ws_inline?
 
 # Below largly cribbed from https://github.com/lark-parser/lark/blob/master/lark/grammars/python.lark
 D_ML_STRING = ~r"([rbtf]{0,4})(\"\"\").*?(?<!\\)(\\\\)*?(\"\"\")"is
